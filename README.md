@@ -4,42 +4,42 @@
 [![LangChain](https://img.shields.io/badge/AI-LangChain-1C3C3C?logo=langchain&logoColor=white)](https://js.langchain.com/)
 [![TypeScript](https://img.shields.io/badge/language-TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
-Dịch vụ AI Microservice thuộc hệ sinh thái **RealVista**, được xây dựng để cung cấp khả năng tư vấn và hỗ trợ tìm kiếm bất động sản thông qua trí tuệ nhân tạo.
+The **RealVista AI Microservice** is a core component of the RealVista ecosystem, designed to provide intelligent real estate consultation and advanced search capabilities powered by AI.
 
-## 🚀 Công nghệ sử dụng
+## 🚀 Tech Stack
 
 - **Backend Framework**: [NestJS](https://nestjs.com/)
 - **AI Orchestration**: [LangChain](https://js.langchain.com/) & [LangGraph](https://langchain-ai.github.io/langgraphjs/)
 - **AI Models**: OpenAI (GPT-4o)
 - **Monitoring**: [LangSmith](https://smith.langchain.com/)
-- **Authentication**: JWT & Passport (Hỗ trợ xác thực người dùng từ hệ thống chính)
+- **Authentication**: JWT & Passport (Integrated with the main system for seamless user verification)
 - **API Documentation**: Swagger UI
 
-## 🏗️ Kiến trúc hệ thống
+## 🏗️ Architecture
 
-Dịch vụ sử dụng mô hình **Agentic Workflow** với LangGraph để xử lý các yêu cầu phức tạp của người dùng:
+The service implements an **Agentic Workflow** using LangGraph to handle complex user requests:
 
-1.  **State Management**: Quản lý ngữ cảnh hội thoại thông qua `LangGraphState`.
-2.  **Tool Calling**: Tích hợp các công cụ tìm kiếm dữ liệu bất động sản, tính toán tài chính và đặt lịch xem nhà.
-3.  **Context Injection**: Tự động trích xuất thông tin người dùng từ JWT để cá nhân hóa kết quả tư vấn.
+1.  **State Management**: Manages conversation context via `LangGraphState`.
+2.  **Tool Calling**: Integrates tools for property data retrieval, financial calculations, and tour booking.
+3.  **Context Injection**: Automatically extracts user information from JWT to provide personalized AI recommendations.
 
-## 🛠️ Cài đặt & Chạy ứng dụng
+## 🛠️ Installation & Getting Started
 
-### Tiền đề
+### Prerequisites
 
 - Node.js (>= 18.x)
-- npm hoặc yarn
+- npm or yarn
 
-### Các bước cài đặt
+### Installation Steps
 
-1.  Cài đặt dependencies:
+1.  Install dependencies:
 
     ```bash
     npm install
     ```
 
-2.  Cấu hình biến môi trường:
-    Tạo file `.env` tại thư mục gốc và cấu hình các keys sau:
+2.  Environment Configuration:
+    Create a `.env` file in the root directory and configure the following keys:
 
     ```env
     OPENAI_API_KEY=your_openai_api_key
@@ -49,13 +49,13 @@ Dịch vụ sử dụng mô hình **Agentic Workflow** với LangGraph để x�
     JWT_SECRET=your_jwt_secret
     ```
 
-3.  Chạy ứng dụng ở chế độ phát triển:
+3.  Run in Development Mode:
 
     ```bash
     npm run start:dev
     ```
 
-4.  Build cho Production:
+4.  Build for Production:
     ```bash
     npm run build
     npm run start:prod
@@ -63,10 +63,10 @@ Dịch vụ sử dụng mô hình **Agentic Workflow** với LangGraph để x�
 
 ## 📚 API Documentation
 
-Sau khi chạy ứng dụng, bạn có thể truy cập tài liệu API (Swagger) tại:
-`http://localhost:3000/api` (hoặc cổng cấu hình của bạn).
+Once the application is running, you can access the API documentation (Swagger) at:
+`http://localhost:3000/api` (or your configured port).
 
-## 🧪 Kiểm thử
+## 🧪 Testing
 
 ```bash
 # Unit tests
@@ -78,8 +78,8 @@ npm run test:e2e
 
 ## 📄 License
 
-Dự án này được cấp phép theo giấy phép UNLICENSED.
+This project is UNLICENSED.
 
 ---
 
-_Phát triển bởi đội ngũ RealVista Capstone Project._
+_Developed by the RealVista Capstone Project team._
