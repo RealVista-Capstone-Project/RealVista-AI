@@ -16,10 +16,10 @@ The **RealVista AI Microservice** is a standalone NestJS service within the Real
                                         │                       └─────────────────┘
                                         │
                                         ▼
-                                  ┌──────────────┐
-                                  │  Google AI   │
-                                  │  Gemini 1.5  │
-                                  └──────────────┘
+                                  ┌─────────────────────────────┐
+                                  │          Google AI          │
+                                  │ gemini-3.1-flash-lite-preview │
+                                  └─────────────────────────────┘
 ```
 
 ### Data Flow
@@ -154,7 +154,7 @@ sequenceDiagram
 | ---------------- | ------------------------------ |
 | Framework        | NestJS 11                      |
 | AI Orchestration | LangGraph + LangChain          |
-| LLM              | Google Gemini 1.5 Flash Lite   |
+| LLM              | Google Gemini 3.1 Flash Lite   |
 | Embeddings       | Google Generative AI (Gemini)  |
 | Vector DB (RAG)  | Qdrant                         |
 | Auth             | API Key + User Context Headers |

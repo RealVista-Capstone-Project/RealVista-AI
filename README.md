@@ -14,7 +14,7 @@ The **RealVista AI Microservice** is a core component of the RealVista ecosystem
 | ----------------- | ------------------------------------------------------------------------------------------------- |
 | Backend Framework | [NestJS](https://nestjs.com/)                                                                     |
 | AI Orchestration  | [LangChain](https://js.langchain.com/) & [LangGraph](https://langchain-ai.github.io/langgraphjs/) |
-| LLM               | Google Gemini (gemini-1.5-flash-lite-preview)                                                     |
+| LLM               | Google Gemini (gemini-3.1-flash-lite-preview)                                                     |
 | Embeddings        | Google Generative AI (gemini-embedding-001)                                                       |
 | Vector Database   | [Qdrant](https://qdrant.tech/) (for RAG)                                                          |
 | Monitoring        | [LangSmith](https://smith.langchain.com/)                                                         |
@@ -27,7 +27,7 @@ The **RealVista AI Microservice** is a core component of the RealVista ecosystem
 Frontend ──Headers/Key──▶ AI Microservice ──REST──▶ Backend API (Spring Boot)
                        │
                        ├──REST────▶ Qdrant (Vector DB / RAG)
-                       └──API─────▶ Google AI (Gemini 1.5)
+                       └──API─────▶ Google AI (gemini-3.1-flash-lite-preview)
 ```
 
 The service implements an **Agentic Workflow** using LangGraph:

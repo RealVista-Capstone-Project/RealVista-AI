@@ -82,12 +82,12 @@ curl -X POST http://localhost:3001/ai/stream \
 
 ## 6. Common Issues
 
-| Issue                | Solution                                                           |
-| :------------------- | :----------------------------------------------------------------- |
-| **404 Not Found**    | Ensure you are using **POST**, not GET, for `/ai/stream`.          |
-| **401 Unauthorized** | Check your `x-api-key` header matches `SERVICE_API_KEY` in `.env`. |
-| **Fetch Failed**     | Ensure Qdrant is running (`docker ps`).                            |
-| **Gemini Error**     | Verify your `GOOGLE_API_KEY` is valid and has quota.               |
+| Issue                | Solution                                                                                 |
+| :------------------- | :--------------------------------------------------------------------------------------- |
+| **404 Not Found**    | Ensure you are using **POST**, not GET, for `/ai/stream`.                                |
+| **401 Unauthorized** | Check your `x-api-key` header matches `SERVICE_API_KEY` in `.env`.                       |
+| **Fetch Failed**     | Ensure Qdrant is running (`docker ps`).                                                  |
+| **Gemini Error**     | Verify your `GOOGLE_API_KEY` is valid and has quota for `gemini-3.1-flash-lite-preview`. |
 
 ---
 
