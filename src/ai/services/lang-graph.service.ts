@@ -5,6 +5,7 @@ import { StateGraph, START, END, MemorySaver } from '@langchain/langgraph';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { SystemMessage, BaseMessage } from '@langchain/core/messages';
 import { ToolsService } from './tools.service.js';
+import { QdrantService } from './qdrant.service.js';
 import type { AgentState } from '../state/agent.state.js';
 import type { UserContext } from '../interfaces/user-context.interface.js';
 
@@ -46,9 +47,10 @@ export class LangGraphService {
   constructor(
     private configService: ConfigService,
     private toolsService: ToolsService,
+    private qdrantService: QdrantService,
   ) {
     this.llm = new ChatGoogleGenerativeAI({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-3.1-flash-lite-preview',
       temperature: 0,
       apiKey: this.configService.get<string>('GOOGLE_API_KEY'),
     });
@@ -70,29 +72,51 @@ export class LangGraphService {
         `[Reasoner Node] Iteration for user: ${state.userContext.username}`,
       );
 
+      // Extract and combine all existing SystemMessages from the state (e.g. from RAG)
+      const existingSystemMessages = state.messages
+        .filter((m) => m._getType() === 'system')
+        .map((m) =>
+          typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+        )
+        .join('\n\n');
+
+      const nonSystemMessages = state.messages.filter(
+        (m) => m._getType() !== 'system',
+      );
+
       const systemMsg = new SystemMessage(`
         You are a highly intelligent real estate assistant specializing in natural language searches, 
         market insights, and answering property FAQs. You are speaking to ${state.userContext.username}.
         Always rely on your backend tools to search the database, get comparable properties, or predict prices.
         If the user asks an FAQ or about general market insights not requiring a DB query, answer using RAG knowledge.
         DO NOT invent prices or properties. Only report what tools return. 
+
+        === CONTEXT FROM OTHER NODES ===
+        ${existingSystemMessages}
+        ================================
       `);
 
-      const messages = [systemMsg, ...state.messages];
+      const messages = [systemMsg, ...nonSystemMessages];
       const response = await llmWithTools.invoke(messages);
 
       return { messages: [response], currentStep: 'reasoning' };
     };
 
     // 3. Define the simplified RAG node (Knowledge Retrieval)
-    // For MVP, we mock the vector DB retrieval process.
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const ragNode = (_state: AgentState) => {
+    const ragNode = async (state: AgentState) => {
       this.logger.debug(`[RAG Node] Retrieving market insights...`);
-      // TODO: Connect to Qdrant here for vector search
-      const ragKnowledge = new SystemMessage(
-        '[RAG Knowledge]: Da Nang market is currently bullish for Coastal Villas in 2026. ROI is estimated at 8-12% annually.',
-      );
+
+      // Extract the latest user message to run a context search
+      const latestMessage = state.messages[state.messages.length - 1];
+      const userQuery =
+        typeof latestMessage?.content === 'string' ? latestMessage.content : '';
+
+      let contextStr = 'No relevant market insights found.';
+      if (userQuery) {
+        contextStr = await this.qdrantService.searchContext(userQuery);
+      }
+
+      const ragKnowledge = new SystemMessage(`[RAG Knowledge]:\n${contextStr}`);
       return { messages: [ragKnowledge], currentStep: 'rag_completed' };
     };
 

@@ -8,11 +8,14 @@ import {
   ApiTags,
   ApiOperation,
   ApiResponse,
-  ApiBearerAuth,
+  ApiSecurity,
 } from '@nestjs/swagger';
+import { ApiKeyGuard } from '../auth/guards/api-key/api-key.guard';
+import { UseGuards } from '@nestjs/common';
 
 @ApiTags('ai')
-@ApiBearerAuth()
+@ApiSecurity('api-key')
+@UseGuards(ApiKeyGuard)
 @Controller('ai')
 export class AiController {
   constructor(private readonly aiService: AiService) {}
