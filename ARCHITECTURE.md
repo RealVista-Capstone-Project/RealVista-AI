@@ -5,21 +5,21 @@
 The **RealVista AI Microservice** is a standalone NestJS service within the RealVista ecosystem. It provides AI-powered real estate consultation through a **LangGraph agentic workflow** that orchestrates tool-calling, RAG retrieval, and multi-step reasoning.
 
 ```
-┌──────────────┐     JWT      ┌──────────────────┐    REST     ┌─────────────────┐
+┌──────────────┐     Headers  ┌──────────────────┐    REST     ┌─────────────────┐
 │  Web / Mobile │ ──────────▶ │  AI Microservice  │ ─────────▶ │  Backend API    │
 │  Frontend     │ ◀────────── │  (this repo)      │ ◀───────── │  (Spring Boot)  │
 └──────────────┘   SSE/JSON   │                   │            └─────────────────┘
                                │                   │
-                               │                   │    gRPC     ┌─────────────────┐
+                               │                   │    REST     ┌─────────────────┐
                                │                   │ ─────────▶ │  Qdrant         │
                                └──────────────────┘ ◀───────── │  (Vector DB)    │
                                         │                       └─────────────────┘
                                         │
                                         ▼
-                                  ┌───────────┐
-                                  │  OpenAI   │
-                                  │  GPT-4o   │
-                                  └───────────┘
+                                  ┌──────────────┐
+                                  │  Google AI   │
+                                  │  Gemini 1.5  │
+                                  └──────────────┘
 ```
 
 ### Data Flow
@@ -128,35 +128,36 @@ sequenceDiagram
 
 ## API Endpoints
 
-| Method | Path                  | Auth | Description                                   |
-| ------ | --------------------- | ---- | --------------------------------------------- |
-| `POST` | `/api/v1/chat/sync`   | JWT  | Synchronous AI chat — returns full response   |
-| `GET`  | `/api/v1/chat/stream` | JWT  | SSE streaming — real-time token + tool events |
-| `GET`  | `/`                   | None | Health check                                  |
-| `GET`  | `/api/docs`           | None | Swagger UI documentation                      |
+| Method | Path         | Auth    | Description                                   |
+| ------ | ------------ | ------- | --------------------------------------------- |
+| `POST` | `/ai/chat`   | API Key | Synchronous AI chat — returns full response   |
+| `POST` | `/ai/stream` | API Key | SSE streaming — real-time token + tool events |
+| `GET`  | `/`          | None    | Health check                                  |
+| `GET`  | `/api/docs`  | None    | Swagger UI documentation                      |
 
 ---
 
 ## Available Tools (RBAC)
 
-| Tool                        | Description                             | Roles          |
-| --------------------------- | --------------------------------------- | -------------- |
-| `search_property_database`  | Query listings by location, price, type | All            |
-| `predict_property_price`    | AI price estimation for a property      | All            |
-| `get_comparable_properties` | Recently sold comparable properties     | All            |
-| `get_recommendations`       | Personalized property recommendations   | All            |
+| Tool                        | Description                             | Roles |
+| --------------------------- | --------------------------------------- | ----- |
+| `search_property_database`  | Query listings by location, price, type | All   |
+| `predict_property_price`    | AI price estimation for a property      | All   |
+| `get_comparable_properties` | Recently sold comparable properties     | All   |
+| `get_recommendations`       | Personalized property recommendations   | All   |
 
 ---
 
 ## Tech Stack
 
-| Layer            | Technology                 |
-| ---------------- | -------------------------- |
-| Framework        | NestJS 11                  |
-| AI Orchestration | LangGraph + LangChain      |
-| LLM              | OpenAI GPT-4o-mini         |
-| Vector DB (RAG)  | Qdrant                     |
-| Auth             | Passport + JWT             |
-| Monitoring       | LangSmith                  |
-| API Docs         | Swagger / OpenAPI          |
-| Language         | TypeScript 5 (strict mode) |
+| Layer            | Technology                     |
+| ---------------- | ------------------------------ |
+| Framework        | NestJS 11                      |
+| AI Orchestration | LangGraph + LangChain          |
+| LLM              | Google Gemini 1.5 Flash Lite   |
+| Embeddings       | Google Generative AI (Gemini)  |
+| Vector DB (RAG)  | Qdrant                         |
+| Auth             | API Key + User Context Headers |
+| Monitoring       | LangSmith                      |
+| API Docs         | Swagger / OpenAPI              |
+| Language         | TypeScript 5 (strict mode)     |

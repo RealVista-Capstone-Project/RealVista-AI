@@ -14,19 +14,20 @@ The **RealVista AI Microservice** is a core component of the RealVista ecosystem
 | ----------------- | ------------------------------------------------------------------------------------------------- |
 | Backend Framework | [NestJS](https://nestjs.com/)                                                                     |
 | AI Orchestration  | [LangChain](https://js.langchain.com/) & [LangGraph](https://langchain-ai.github.io/langgraphjs/) |
-| LLM               | OpenAI (GPT-4o-mini)                                                                              |
+| LLM               | Google Gemini (gemini-1.5-flash-lite-preview)                                                     |
+| Embeddings        | Google Generative AI (gemini-embedding-001)                                                       |
 | Vector Database   | [Qdrant](https://qdrant.tech/) (for RAG)                                                          |
 | Monitoring        | [LangSmith](https://smith.langchain.com/)                                                         |
-| Authentication    | JWT & Passport (shared secret with Backend API)                                                   |
+| Authentication    | API Key & Shared User Context                                                                     |
 | API Documentation | Swagger UI                                                                                        |
 
 ## 🏗️ Architecture Overview
 
 ```
-Frontend ──JWT──▶ AI Microservice ──REST──▶ Backend API (Spring Boot)
+Frontend ──Headers/Key──▶ AI Microservice ──REST──▶ Backend API (Spring Boot)
                        │
-                       ├──gRPC──▶ Qdrant (Vector DB / RAG)
-                       └──API───▶ OpenAI (GPT-4o)
+                       ├──REST────▶ Qdrant (Vector DB / RAG)
+                       └──API─────▶ Google AI (Gemini 1.5)
 ```
 
 The service implements an **Agentic Workflow** using LangGraph:
@@ -94,17 +95,19 @@ npm run start:prod
 
 ## 🔐 Environment Variables
 
-| Variable               | Required | Description                                        |
-| ---------------------- | -------- | -------------------------------------------------- |
-| `PORT`                 | No       | Service port (default: `3001`)                     |
-| `BACKEND_API_URL`      | Yes      | Main backend API URL                               |
-| `JWT_SECRET`           | Yes      | JWT secret (must match Backend API)                |
-| `OPENAI_API_KEY`       | Yes      | OpenAI API key                                     |
-| `LANGCHAIN_TRACING_V2` | No       | Enable LangSmith tracing (`true`/`false`)          |
-| `LANGCHAIN_ENDPOINT`   | No       | LangSmith API endpoint                             |
-| `LANGCHAIN_API_KEY`    | No       | LangSmith API key                                  |
-| `LANGCHAIN_PROJECT`    | No       | LangSmith project name                             |
-| `QDRANT_URL`           | No       | Qdrant REST URL (default: `http://localhost:6333`) |
+| Variable                 | Required | Description                                        |
+| ------------------------ | -------- | -------------------------------------------------- |
+| `PORT`                   | No       | Service port (default: `3001`)                     |
+| `BACKEND_API_URL`        | Yes      | Main backend API URL                               |
+| `SERVICE_API_KEY`        | Yes      | API Key for internal microservice communication    |
+| `GOOGLE_API_KEY`         | Yes      | Google AI API key                                  |
+| `LANGCHAIN_TRACING_V2`   | No       | Enable LangSmith tracing (`true`/`false`)          |
+| `LANGCHAIN_ENDPOINT`     | No       | LangSmith API endpoint                             |
+| `LANGCHAIN_API_KEY`      | No       | LangSmith API key                                  |
+| `LANGCHAIN_PROJECT`      | No       | LangSmith project name                             |
+| `QDRANT_URL`             | No       | Qdrant REST URL (default: `http://localhost:6333`) |
+| `QDRANT_API_KEY`         | No       | Qdrant API Key (optional)                          |
+| `QDRANT_COLLECTION_NAME` | No       | Collection name (default: `realestate_knowledge`)  |
 
 ## 📂 Project Structure
 
@@ -127,12 +130,12 @@ Once running, access Swagger UI at: `http://localhost:3001/api/docs`
 
 ### Endpoints
 
-| Method | Path                  | Description                      |
-| ------ | --------------------- | -------------------------------- |
-| `POST` | `/api/v1/chat/sync`   | Synchronous AI chat response     |
-| `GET`  | `/api/v1/chat/stream` | SSE streaming (real-time tokens) |
+| Method | Path         | Description                      |
+| ------ | ------------ | -------------------------------- |
+| `POST` | `/ai/chat`   | Synchronous AI chat response     |
+| `POST` | `/ai/stream` | SSE streaming (real-time tokens) |
 
-Both endpoints require a valid JWT Bearer token.
+Both endpoints require a valid `x-api-key` in the header.
 
 ## 🧪 Testing
 
