@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { DynamicTool, tool } from '@langchain/core/tools';
+import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
+import type { StructuredToolInterface } from '@langchain/core/tools';
 
 @Injectable()
 export class ToolsService {
@@ -10,8 +11,8 @@ export class ToolsService {
    * Generates all available tools for the Real Estate Agent.
    * Based on the user roles and context, we can conditionally add tools here.
    */
-  getAvailableTools(userRoles: string[]): any[] {
-    const defaultTools = [
+  getAvailableTools(userRoles: string[]): StructuredToolInterface[] {
+    const defaultTools: StructuredToolInterface[] = [
       this.searchPropertyDatabase(),
       this.predictPropertyPrice(),
       this.getComparableProperties(),
@@ -33,7 +34,7 @@ export class ToolsService {
   // 1. Tool-calling Agent: Query internal property database
   private searchPropertyDatabase() {
     return tool(
-      async ({ location, maxPrice, propertyType }) => {
+      ({ location, maxPrice, propertyType }) => {
         this.logger.log(
           `Searching DB for: ${location}, <${maxPrice}, type: ${propertyType}`,
         );
@@ -77,7 +78,7 @@ export class ToolsService {
   // 2. Trigger price prediction model
   private predictPropertyPrice() {
     return tool(
-      async ({ propertyId }) => {
+      ({ propertyId }) => {
         this.logger.log(
           `Triggering Price Model for Property ID: ${propertyId}`,
         );
@@ -103,7 +104,7 @@ export class ToolsService {
   // 3. Retrieve comparable properties
   private getComparableProperties() {
     return tool(
-      async ({ propertyId }) => {
+      ({ propertyId }) => {
         this.logger.log(`Fetching comps for Property ID: ${propertyId}`);
         // TODO: Call Backend Comps API
         return JSON.stringify([
@@ -135,7 +136,7 @@ export class ToolsService {
   // 4. Recommendation Engine
   private getRecommendations() {
     return tool(
-      async ({ userContext }) => {
+      ({ userContext }) => {
         this.logger.log(
           `Fetching recommendations for user context: ${JSON.stringify(userContext)}`,
         );

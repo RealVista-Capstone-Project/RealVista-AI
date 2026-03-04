@@ -1,76 +1,55 @@
-import {
-  Controller,
-  Post,
-  Get,
-  Body,
-  Sse,
-  UseGuards,
-  Query,
-} from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Observable } from 'rxjs';
+import { Controller, Post, Body, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { AiService } from './services/ai.service';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth/jwt-auth.guard';
-import { User } from '../decorators/user/user.decorator';
 import { ChatQueryDto } from './dto/chat-query.dto';
+import { User } from '../decorators/user/user.decorator';
+import type { UserContext } from './interfaces/user-context.interface';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 
-@ApiTags('AI Chat')
+@ApiTags('ai')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
-@Controller('api/v1/chat')
+@Controller('ai')
 export class AiController {
   constructor(private readonly aiService: AiService) {}
 
-  @ApiOperation({ summary: 'Synchronously process an AI reasoning query.' })
-  @Post('sync')
-  async processSync(@Body() chatQueryDto: ChatQueryDto, @User() user: any) {
+  @Post('chat')
+  @ApiOperation({ summary: 'Process a chat query synchronously' })
+  @ApiResponse({
+    status: 200,
+    description: 'The final response from the AI agent.',
+  })
+  async chat(@Body() chatQueryDto: ChatQueryDto, @User() user: UserContext) {
     return this.aiService.processSync(chatQueryDto.prompt, user);
   }
 
-  @ApiOperation({ summary: 'Stream reasoning via Server-Sent Events.' })
-  @Get('stream')
-  @Sse()
-  processStream(
-    @Query('prompt') prompt: string,
-    @Query('threadId') threadId: string,
-    @User() user: any,
-  ): Observable<MessageEvent> {
-    // We wrap LangGraph's async generator into an RxJS Observable for NestJS SSE
-    return new Observable((subscriber) => {
-      (async () => {
-        try {
-          const tId = threadId || Date.now().toString(); // Fallback ID for MVP
-          const stream = await this.aiService.processStream(prompt, tId, user);
+  @Post('stream')
+  @ApiOperation({ summary: 'Stream the chat query response via SSE' })
+  @ApiResponse({ status: 200, description: 'SSE stream of events.' })
+  async stream(
+    @Body() chatQueryDto: ChatQueryDto,
+    @User() user: UserContext,
+    @Res() res: Response,
+  ) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
 
-          for await (const event of stream) {
-            // Depending on the event type from LangGraph, we can filter what we send to the client
-            const eventType = event.event;
+    const threadId = chatQueryDto.threadId || 'new-thread'; // Simplified for now
+    const eventStream = this.aiService.processStream(
+      chatQueryDto.prompt,
+      threadId,
+      user,
+    );
 
-            // Forward relevant tokens or tool calls
-            if (eventType === 'on_chat_model_stream') {
-              const chunk = event.data?.chunk?.content;
-              if (chunk) {
-                subscriber.next({
-                  data: JSON.stringify({ type: 'token', content: chunk }),
-                } as MessageEvent);
-              }
-            } else if (eventType === 'on_tool_start') {
-              subscriber.next({
-                data: JSON.stringify({
-                  type: 'tool',
-                  content: `Starting tool ${event.name}...`,
-                }),
-              } as MessageEvent);
-            }
-          }
-          subscriber.next({
-            data: JSON.stringify({ type: 'done' }),
-          } as MessageEvent);
-          subscriber.complete();
-        } catch (error) {
-          subscriber.error(error);
-        }
-      })();
-    });
+    for await (const event of eventStream) {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    }
+
+    res.end();
   }
 }

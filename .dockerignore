@@ -1,0 +1,15 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+*.md
+.vscode
+.idea
+coverage
+.nyc_output
+.agent
+.agents
+.tmp
+.temp

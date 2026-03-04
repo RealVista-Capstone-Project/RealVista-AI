@@ -1,38 +1,44 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ChatOpenAI } from '@langchain/openai';
+import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { StateGraph, START, END, MemorySaver } from '@langchain/langgraph';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
-import {
-  SystemMessage,
-  HumanMessage,
-  BaseMessage,
-} from '@langchain/core/messages';
-import { ToolsService } from './tools.service';
-import { AgentState } from '../state/agent.state';
+import { SystemMessage, BaseMessage } from '@langchain/core/messages';
+import { ToolsService } from './tools.service.js';
+import type { AgentState } from '../state/agent.state.js';
+import type { UserContext } from '../interfaces/user-context.interface.js';
+
+interface ExtractedEntities {
+  location?: string;
+  priceRange?: string;
+  propertyType?: string;
+}
 
 @Injectable()
 export class LangGraphService {
   private readonly logger = new Logger(LangGraphService.name);
-  private llm: ChatOpenAI;
+  private llm: ChatGoogleGenerativeAI;
   private readonly checkpointer = new MemorySaver(); // In-memory checkpointer for MVP streams
 
   // Define our channels for state management based on our AgentState interface
   private readonly stateChannels = {
     messages: {
       value: (x: BaseMessage[], y: BaseMessage[]) => x.concat(y),
-      default: () => [],
+      default: () => [] as BaseMessage[],
     },
     userContext: {
-      value: (x: any, y: any) => ({ ...x, ...y }),
-      default: () => ({ sub: '', username: '', roles: [] }),
+      value: (x: UserContext, y: Partial<UserContext>) => ({ ...x, ...y }),
+      default: (): UserContext => ({ sub: '', username: '', roles: [] }),
     },
     extractedEntities: {
-      value: (x: any, y: any) => ({ ...x, ...y }),
-      default: () => ({}),
+      value: (x: ExtractedEntities, y: Partial<ExtractedEntities>) => ({
+        ...x,
+        ...y,
+      }),
+      default: (): ExtractedEntities => ({}),
     },
     currentStep: {
-      value: (x: string, y: string) => y,
+      value: (_x: string, y: string) => y,
       default: () => 'init',
     },
   };
@@ -41,10 +47,10 @@ export class LangGraphService {
     private configService: ConfigService,
     private toolsService: ToolsService,
   ) {
-    this.llm = new ChatOpenAI({
-      modelName: 'gpt-4o-mini',
+    this.llm = new ChatGoogleGenerativeAI({
+      model: 'gemini-1.5-flash',
       temperature: 0,
-      openAIApiKey: this.configService.get('OPENAI_API_KEY'),
+      apiKey: this.configService.get<string>('GOOGLE_API_KEY'),
     });
   }
 
@@ -80,9 +86,10 @@ export class LangGraphService {
 
     // 3. Define the simplified RAG node (Knowledge Retrieval)
     // For MVP, we mock the vector DB retrieval process.
-    const ragNode = async (state: AgentState) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const ragNode = (_state: AgentState) => {
       this.logger.debug(`[RAG Node] Retrieving market insights...`);
-      // TODO: Connect to Pinecone/Qdrant here for vector search
+      // TODO: Connect to Qdrant here for vector search
       const ragKnowledge = new SystemMessage(
         '[RAG Knowledge]: Da Nang market is currently bullish for Coastal Villas in 2026. ROI is estimated at 8-12% annually.',
       );
@@ -93,12 +100,15 @@ export class LangGraphService {
     const toolNode = new ToolNode(tools);
 
     // 5. Build the Graph
-    const workflow = new StateGraph<any>({
-      channels: this.stateChannels as any,
+    // Note: LangGraph's JS StateGraph API expects `Annotation`-based channels.
+    // Hand-crafted reducer objects are valid at runtime but require a type cast.
+
+    const workflow = new StateGraph({
+      channels: this.stateChannels as never,
     })
       // Add nodes
-      .addNode('rag', ragNode)
-      .addNode('reasoner', reasonerNode)
+      .addNode('rag', ragNode as never)
+      .addNode('reasoner', reasonerNode as never)
       .addNode('tools', toolNode)
 
       // Add edges & routing
@@ -109,20 +119,21 @@ export class LangGraphService {
       // Conditional Routing: Let the LLM decide if it needs to call tools or finish
       .addConditionalEdges(
         'reasoner',
-        (state: any) => {
+        ((state: AgentState) => {
           const lastMessage = state.messages[state.messages.length - 1];
           // If the model decides to call a tool, route to 'tools'
           if (
             lastMessage &&
             'tool_calls' in lastMessage &&
-            lastMessage.tool_calls?.length > 0
+            (lastMessage as BaseMessage & { tool_calls?: unknown[] }).tool_calls
+              ?.length
           ) {
             this.logger.debug('Routing to Tools Node');
             return 'tools';
           }
           this.logger.debug('Routing to END');
           return END;
-        },
+        }) as never,
         ['tools', END],
       )
       // After tools finish, loop back to reasoner to interpret tool results

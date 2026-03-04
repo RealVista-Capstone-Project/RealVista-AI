@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { LangGraphService } from './lang-graph.service';
 import { HumanMessage } from '@langchain/core/messages';
 import { v4 as uuidv4 } from 'uuid';
+import type { UserContext } from '../interfaces/user-context.interface';
+import type { AgentState } from '../state/agent.state';
 
 @Injectable()
 export class AiService {
@@ -12,12 +14,12 @@ export class AiService {
   /**
    * Synchronously process a prompt and return the final reasoned response
    */
-  async processSync(prompt: string, userContext: any) {
+  async processSync(prompt: string, userContext: UserContext) {
     this.logger.log(`Processing sync query for ${userContext.username}`);
 
     // Compile workflow tailored for this user's roles
     const workflow = this.langGraphService.createAgentWorkflow(
-      userRoles(userContext),
+      userContext.roles,
     );
 
     // A unique thread ID is required for MemorySaver to maintain session history
@@ -30,8 +32,12 @@ export class AiService {
 
     const config = { configurable: { thread_id: threadId } };
 
-    // Invoke the graph
-    const finalState = await workflow.invoke(initialState, config);
+    // Invoke the graph — cast needed because LangGraph's hand-crafted channels
+    // don't propagate state types through compile()
+    const finalState = (await workflow.invoke(
+      initialState as never,
+      config,
+    )) as unknown as AgentState;
 
     const lastMessage = finalState.messages[finalState.messages.length - 1];
     return {
@@ -43,13 +49,13 @@ export class AiService {
   /**
    * Asynchronously stream the reasoning process and tokens back to the client
    */
-  async processStream(prompt: string, threadId: string, userContext: any) {
+  processStream(prompt: string, threadId: string, userContext: UserContext) {
     this.logger.log(
       `Processing SSE Stream query for ${userContext.username} on thread ${threadId}`,
     );
 
     const workflow = this.langGraphService.createAgentWorkflow(
-      userRoles(userContext),
+      userContext.roles,
     );
     const config = { configurable: { thread_id: threadId } };
 
@@ -59,11 +65,9 @@ export class AiService {
     };
 
     // Use streamEvents for detailed SSE streaming of LangGraph's lifecycle
-    return workflow.streamEvents(initialState, { ...config, version: 'v2' });
+    return workflow.streamEvents(initialState as never, {
+      ...config,
+      version: 'v2',
+    });
   }
-}
-
-// Utility
-function userRoles(ctx: any): string[] {
-  return ctx?.roles || [];
 }
