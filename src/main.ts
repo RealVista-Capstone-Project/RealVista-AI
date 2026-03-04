@@ -26,7 +26,7 @@ async function bootstrap() {
       'The AI core microservice featuring RAG and LangGraph-powered Agent reasoning.',
     )
     .setVersion('1.0')
-    .addBearerAuth()
+    .addApiKey({ type: 'apiKey', name: 'x-api-key', in: 'header' }, 'api-key')
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
