@@ -228,9 +228,10 @@ export class UserBehaviorVectorService implements OnModuleInit {
         this.logger.log(
           `Collection "${this.collectionName}" not found – creating…`,
         );
-        // Gemini embedding-001 outputs 768-dimensional vectors
+        // Gemini embedding-001 outputs 3072-dimensional vectors (updated in 2025)
+        // Can be scaled down to 768 or 1536 using output_dimensionality parameter
         await this.qdrantClient.createCollection(this.collectionName, {
-          vectors: { size: 768, distance: 'Cosine' },
+          vectors: { size: 3072, distance: 'Cosine' },
         });
         // Create payload indexes for fast filtering
         await this.qdrantClient.createPayloadIndex(this.collectionName, {
