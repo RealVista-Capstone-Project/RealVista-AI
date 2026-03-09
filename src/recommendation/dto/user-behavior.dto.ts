@@ -7,7 +7,7 @@ import {
   IsOptional,
   IsEnum,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export enum BehaviorType {
@@ -24,6 +24,12 @@ export class BehaviorEventDto {
     description: 'Type of user behavior event',
     enum: BehaviorType,
     example: BehaviorType.VIEW,
+  })
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      return value.toUpperCase();
+    }
+    return value as BehaviorType;
   })
   @IsEnum(BehaviorType)
   eventType: BehaviorType;

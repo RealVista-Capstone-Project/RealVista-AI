@@ -1,4 +1,10 @@
-import { Controller, Post, Body, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -11,10 +17,12 @@ import {
   IngestBehaviorDto,
   GetRecommendationsDto,
 } from './dto/user-behavior.dto';
+import { LogRequestInterceptor } from '../common/interceptors/log-request.interceptor';
 
 @ApiTags('recommendation')
 @ApiSecurity('api-key')
 @UseGuards(ApiKeyGuard)
+@UseInterceptors(LogRequestInterceptor)
 @Controller('recommendation')
 export class RecommendationController {
   constructor(private readonly recommendationService: RecommendationService) {}
