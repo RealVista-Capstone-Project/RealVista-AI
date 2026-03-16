@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { QdrantVectorStore } from '@langchain/qdrant';
 import { GoogleGenerativeAIEmbeddings } from '@langchain/google-genai';
 import { Document } from '@langchain/core/documents';
+import { AI_MODELS } from '../ai.config.js';
 
 @Injectable()
 export class QdrantService implements OnModuleInit {
@@ -12,8 +13,8 @@ export class QdrantService implements OnModuleInit {
 
   constructor(private configService: ConfigService) {
     this.embeddings = new GoogleGenerativeAIEmbeddings({
-      apiKey: this.configService.get<string>('GOOGLE_API_KEY'),
-      model: 'gemini-embedding-001', // Gemini embedding model
+      apiKey: this.configService.getOrThrow<string>('GOOGLE_API_KEY'),
+      model: AI_MODELS.EMBEDDING_MODEL,
     });
   }
 
@@ -31,10 +32,6 @@ export class QdrantService implements OnModuleInit {
     this.logger.log(`Initializing Qdrant Vector Store at ${qdrantUrl}...`);
 
     try {
-      // The ESLint language server occasionally fails to resolve the return type
-      // of fromExistingCollection, interpreting it as an 'error' type.
-      // We explicitly disable the rule for this line as tsc verifies it correctly.
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
       this.vectorStore = await QdrantVectorStore.fromExistingCollection(
         this.embeddings,
         {
@@ -55,7 +52,7 @@ export class QdrantService implements OnModuleInit {
       // Attempt to initialize a new one if it didn't exist (this creates the collection)
       try {
         this.logger.log('Attempting to create a new Qdrant collection...');
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+
         this.vectorStore = await QdrantVectorStore.fromTexts(
           [
             'Mock initialization document. Real data should be loaded via a separate pipeline.',
@@ -103,7 +100,7 @@ export class QdrantService implements OnModuleInit {
 
     try {
       this.logger.debug(`Searching Qdrant for: "${query}"`);
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+
       const results: Document[] = await this.vectorStore.similaritySearch(
         query,
         k,
