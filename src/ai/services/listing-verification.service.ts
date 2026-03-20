@@ -47,4 +47,57 @@ export class ListingVerificationService {
       currentStep: result.currentStep ?? 'unknown',
     };
   }
+  async *verifyListingStream(
+    title: string,
+    description: string,
+    listingId?: string,
+  ): AsyncGenerator<{ event: string; data: Record<string, unknown> }> {
+    this.logger.log(`[Stream] Verifying listing content: ${title}`);
+
+    const workflow = this.langGraphService.createListingVerificationWorkflow();
+
+    yield {
+      event: 'start',
+      data: {
+        message: 'Listing verification started',
+        title,
+        listingId,
+      },
+    };
+
+    const stream = await workflow.stream({
+      title,
+      description,
+      listingId,
+    } as never);
+
+    for await (const chunk of stream) {
+      for (const [nodeName, nodeOutput] of Object.entries(chunk)) {
+        const output = nodeOutput as Record<string, unknown>;
+
+        if (nodeName === 'verification' && output.analysis) {
+          const analysis = output.analysis as Record<string, unknown>;
+          yield {
+            event: 'verification_complete',
+            data: {
+              step: 'content_verification_completed',
+              analysis: {
+                isValid: analysis.isValid ?? false,
+                safetyScore: analysis.safetyScore ?? 0,
+                professionalismScore: analysis.professionalismScore ?? 0,
+                clarityScore: analysis.clarityScore ?? 0,
+                identifiedFeatures: analysis.identifiedFeatures ?? [],
+                feedback: analysis.feedback ?? '',
+              },
+            },
+          };
+        }
+      }
+    }
+
+    yield {
+      event: 'done',
+      data: { message: 'Verification complete' },
+    };
+  }
 }
