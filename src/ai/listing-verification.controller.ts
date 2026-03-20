@@ -9,7 +9,7 @@ import {
   ApiResponse,
   ApiSecurity,
 } from '@nestjs/swagger';
-import { Response } from 'express';
+import type { Response } from 'express';
 
 @ApiTags('ai')
 @ApiSecurity('api-key')

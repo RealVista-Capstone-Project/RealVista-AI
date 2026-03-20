@@ -59,6 +59,7 @@ export class ImageAnalysisService {
       imageUrl: result.imageUrl ?? originalname ?? 'uploaded-file',
     };
   }
+
   async *analyzeImageQualityStream(
     fileBuffer: Buffer,
     originalname: string,
@@ -87,9 +88,6 @@ export class ImageAnalysisService {
     });
 
     for await (const chunk of stream) {
-      // Each chunk is keyed by the node name that just completed
-      // e.g. { vision: { analysis: ..., currentStep: ... } }
-      // or   { aggregator: { finalScore: ..., currentStep: ... } }
       for (const [nodeName, nodeOutput] of Object.entries(chunk)) {
         const output = nodeOutput as Record<string, unknown>;
 
@@ -123,7 +121,6 @@ export class ImageAnalysisService {
       }
     }
 
-    // Emit final complete event
     yield {
       event: 'done',
       data: { message: 'Analysis complete' },

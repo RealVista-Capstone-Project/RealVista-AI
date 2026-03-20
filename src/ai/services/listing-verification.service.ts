@@ -47,6 +47,7 @@ export class ListingVerificationService {
       currentStep: result.currentStep ?? 'unknown',
     };
   }
+
   async *verifyListingStream(
     title: string,
     description: string,
@@ -75,7 +76,7 @@ export class ListingVerificationService {
       for (const [nodeName, nodeOutput] of Object.entries(chunk)) {
         const output = nodeOutput as Record<string, unknown>;
 
-        if (nodeName === 'verification' && output.analysis) {
+        if (nodeName === 'verify' && output.analysis) {
           const analysis = output.analysis as Record<string, unknown>;
           yield {
             event: 'verification_complete',
