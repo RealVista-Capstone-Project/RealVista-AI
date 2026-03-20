@@ -6,6 +6,8 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  Res,
+  Header,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ImageAnalysisService } from './services/image-analysis.service';
@@ -20,9 +22,29 @@ import {
   ApiConsumes,
   ApiBody,
 } from '@nestjs/swagger';
+import type { Response } from 'express';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ALLOWED_MIME_TYPES = /^image\/(jpeg|png|webp|heic|heif)$/;
+
+const fileInterceptorOptions = {
+  limits: { fileSize: MAX_FILE_SIZE },
+  fileFilter: (
+    _req: unknown,
+    file: { mimetype: string },
+    callback: (err: Error | null, acceptFile: boolean) => void,
+  ) => {
+    if (!ALLOWED_MIME_TYPES.test(file.mimetype)) {
+      return callback(
+        new BadRequestException(
+          `Invalid file type: ${file.mimetype}. Allowed types: JPEG, PNG, WebP, HEIC, HEIF`,
+        ),
+        false,
+      );
+    }
+    callback(null, true);
+  },
+};
 
 @ApiTags('ai')
 @ApiSecurity('api-key')
@@ -32,27 +54,12 @@ export class ImageAnalysisController {
   constructor(private readonly imageAnalysisService: ImageAnalysisService) {}
 
   @Post('analyze-quality')
-  @UseInterceptors(
-    FileInterceptor('file', {
-      limits: { fileSize: MAX_FILE_SIZE },
-      fileFilter: (_req, file, callback) => {
-        if (!ALLOWED_MIME_TYPES.test(file.mimetype)) {
-          return callback(
-            new BadRequestException(
-              `Invalid file type: ${file.mimetype}. Allowed types: JPEG, PNG, WebP, HEIC, HEIF`,
-            ),
-            false,
-          );
-        }
-        callback(null, true);
-      },
-    }),
-  )
+  @UseInterceptors(FileInterceptor('file', fileInterceptorOptions))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary: 'Analyze image quality from an uploaded file',
     description:
-      'Directly analyzes the quality of an uploaded image using Gemini Vision and returns the result synchronously.',
+      'Analyzes the quality of an uploaded image using Gemini Vision and returns the result synchronously.',
   })
   @ApiBody({
     description: 'The image file and optional metadata for analysis.',
@@ -92,5 +99,67 @@ export class ImageAnalysisController {
       file.originalname,
       listingId,
     );
+  }
+
+  @Post('analyze-quality/stream')
+  @UseInterceptors(FileInterceptor('file', fileInterceptorOptions))
+  @Header('Content-Type', 'text/event-stream')
+  @Header('Cache-Control', 'no-cache')
+  @Header('Connection', 'keep-alive')
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Analyze image quality with streaming response (SSE)',
+    description:
+      'Analyzes image quality using Gemini Vision and streams intermediate results as Server-Sent Events. ' +
+      'Each step of the workflow emits an event: `start`, `vision_complete`, `score_complete`, and `done`.',
+  })
+  @ApiBody({
+    description: 'The image file and optional metadata for analysis.',
+    type: ImageUploadDto,
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Streaming SSE response. Each event contains `event:` and `data:` fields in SSE format.',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'No file uploaded or invalid file type/size.',
+  })
+  async analyzeQualityStream(
+    @UploadedFile()
+    file: {
+      buffer: Buffer;
+      originalname: string;
+      mimetype: string;
+      size: number;
+    },
+    @Body('listingId') listingId: string | undefined,
+    @Res() res: Response,
+  ): Promise<void> {
+    if (!file) {
+      throw new BadRequestException(
+        'No file uploaded. Please provide an image file.',
+      );
+    }
+
+    try {
+      const stream = this.imageAnalysisService.analyzeImageQualityStream(
+        file.buffer,
+        file.originalname,
+        listingId,
+      );
+
+      for await (const event of stream) {
+        res.write(`event: ${event.event}\n`);
+        res.write(`data: ${JSON.stringify(event.data)}\n\n`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      res.write(`event: error\n`);
+      res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
+    } finally {
+      res.end();
+    }
   }
 }

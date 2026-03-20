@@ -59,4 +59,74 @@ export class ImageAnalysisService {
       imageUrl: result.imageUrl ?? originalname ?? 'uploaded-file',
     };
   }
+  async *analyzeImageQualityStream(
+    fileBuffer: Buffer,
+    originalname: string,
+    listingId?: string,
+  ): AsyncGenerator<{ event: string; data: Record<string, unknown> }> {
+    this.logger.log(
+      `[Stream] Analyzing image quality for listing: ${listingId || 'manual-upload'}`,
+    );
+
+    const workflow = this.langGraphService.createImageAnalysisWorkflow();
+
+    yield {
+      event: 'start',
+      data: {
+        message: 'Image analysis started',
+        listingId: listingId || 'manual-upload',
+        imageUrl: originalname || 'uploaded-file',
+      },
+    };
+
+    const stream = await workflow.stream({
+      imageBuffer: fileBuffer,
+      listingId: listingId || 'manual-upload',
+      imageUrl: originalname || 'uploaded-file',
+      messages: [],
+    });
+
+    for await (const chunk of stream) {
+      // Each chunk is keyed by the node name that just completed
+      // e.g. { vision: { analysis: ..., currentStep: ... } }
+      // or   { aggregator: { finalScore: ..., currentStep: ... } }
+      for (const [nodeName, nodeOutput] of Object.entries(chunk)) {
+        const output = nodeOutput as Record<string, unknown>;
+
+        if (nodeName === 'vision' && output.analysis) {
+          const analysis = output.analysis as Record<string, unknown>;
+          yield {
+            event: 'vision_complete',
+            data: {
+              step: 'vision_analysis_completed',
+              analysis: {
+                isValidProperty: analysis.isValidProperty ?? true,
+                lightingScore: analysis.lightingScore ?? 0,
+                compositionScore: analysis.compositionScore ?? 0,
+                clarityScore: analysis.clarityScore ?? 0,
+                listingRelevance: analysis.listingRelevance ?? '',
+                feedback: analysis.feedback ?? '',
+              },
+            },
+          };
+        }
+
+        if (nodeName === 'aggregator') {
+          yield {
+            event: 'score_complete',
+            data: {
+              step: 'scoring_completed',
+              finalScore: (output.finalScore as number) ?? 0,
+            },
+          };
+        }
+      }
+    }
+
+    // Emit final complete event
+    yield {
+      event: 'done',
+      data: { message: 'Analysis complete' },
+    };
+  }
 }
