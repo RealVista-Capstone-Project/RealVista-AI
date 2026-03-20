@@ -1,6 +1,7 @@
-import { Controller, Post, Body, UseGuards, Logger } from '@nestjs/common';
-import { LangGraphService } from './services/lang-graph.service';
+import { Controller, Post, Body, UseGuards } from '@nestjs/common';
+import { ListingVerificationService } from './services/listing-verification.service';
 import { VerifyListingDto } from './dto/verify-listing.dto';
+import { ListingVerificationResponseDto } from './dto/listing-verification-response.dto';
 import { ApiKeyGuard } from '../auth/guards/api-key/api-key.guard';
 import {
   ApiTags,
@@ -14,9 +15,9 @@ import {
 @UseGuards(ApiKeyGuard)
 @Controller('ai')
 export class ListingVerificationController {
-  private readonly logger = new Logger(ListingVerificationController.name);
-
-  constructor(private readonly langGraphService: LangGraphService) {}
+  constructor(
+    private readonly listingVerificationService: ListingVerificationService,
+  ) {}
 
   @Post('verify-listing')
   @ApiOperation({
@@ -25,20 +26,15 @@ export class ListingVerificationController {
   @ApiResponse({
     status: 200,
     description: 'Detailed analysis of the listing content.',
+    type: ListingVerificationResponseDto,
   })
-  async verifyListing(@Body() verifyListingDto: VerifyListingDto) {
-    this.logger.log(`Verifying listing content: ${verifyListingDto.title}`);
-
-    const workflow = this.langGraphService.createListingVerificationWorkflow();
-
-    const initialState = {
-      title: verifyListingDto.title,
-      description: verifyListingDto.description,
-      listingId: verifyListingDto.listingId,
-    };
-
-    const result = await workflow.invoke(initialState as never);
-
-    return result;
+  async verifyListing(
+    @Body() verifyListingDto: VerifyListingDto,
+  ): Promise<ListingVerificationResponseDto> {
+    return this.listingVerificationService.verifyListing(
+      verifyListingDto.title,
+      verifyListingDto.description,
+      verifyListingDto.listingId,
+    );
   }
 }

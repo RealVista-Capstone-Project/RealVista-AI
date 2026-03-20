@@ -5,10 +5,10 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { LangGraphService } from './services/lang-graph.service';
-import { ImageAnalysisState } from './state/image-analysis.state';
+import { ImageAnalysisService } from './services/image-analysis.service';
 import { ImageUploadDto } from './dto/image-upload.dto';
 import { ImageAnalysisResponseDto } from './dto/image-analysis-response.dto';
 import { ApiKeyGuard } from '../auth/guards/api-key/api-key.guard';
@@ -21,22 +21,33 @@ import {
   ApiBody,
 } from '@nestjs/swagger';
 
-interface MulterFile {
-  buffer: Buffer;
-  originalname: string;
-  mimetype: string;
-  size: number;
-}
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const ALLOWED_MIME_TYPES = /^image\/(jpeg|png|webp|heic|heif)$/;
 
 @ApiTags('ai')
 @ApiSecurity('api-key')
 @UseGuards(ApiKeyGuard)
 @Controller('ai')
 export class ImageAnalysisController {
-  constructor(private readonly langGraphService: LangGraphService) {}
+  constructor(private readonly imageAnalysisService: ImageAnalysisService) {}
 
   @Post('analyze-quality')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_FILE_SIZE },
+      fileFilter: (_req, file, callback) => {
+        if (!ALLOWED_MIME_TYPES.test(file.mimetype)) {
+          return callback(
+            new BadRequestException(
+              `Invalid file type: ${file.mimetype}. Allowed types: JPEG, PNG, WebP, HEIC, HEIF`,
+            ),
+            false,
+          );
+        }
+        callback(null, true);
+      },
+    }),
+  )
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary: 'Analyze image quality from an uploaded file',
@@ -53,31 +64,33 @@ export class ImageAnalysisController {
     type: ImageAnalysisResponseDto,
   })
   @ApiResponse({
+    status: 400,
+    description: 'No file uploaded or invalid file type/size.',
+  })
+  @ApiResponse({
     status: 401,
     description: 'Invalid or missing API Key (x-api-key header).',
   })
   async analyzeQuality(
-    @UploadedFile() file: MulterFile,
+    @UploadedFile()
+    file: {
+      buffer: Buffer;
+      originalname: string;
+      mimetype: string;
+      size: number;
+    },
     @Body('listingId') listingId?: string,
-  ) {
+  ): Promise<ImageAnalysisResponseDto> {
     if (!file) {
-      return { message: 'No file uploaded' };
+      throw new BadRequestException(
+        'No file uploaded. Please provide an image file.',
+      );
     }
 
-    const workflow = this.langGraphService.createImageAnalysisWorkflow();
-    const result = (await workflow.invoke({
-      imageBuffer: file.buffer,
-      listingId: listingId || 'manual-upload',
-      imageUrl: file.originalname || 'uploaded-file',
-      messages: [],
-    })) as ImageAnalysisState;
-
-    return {
-      analysis: result.analysis,
-      finalScore: result.finalScore,
-      currentStep: result.currentStep,
-      listingId: result.listingId,
-      imageUrl: result.imageUrl,
-    };
+    return this.imageAnalysisService.analyzeImageQuality(
+      file.buffer,
+      file.originalname,
+      listingId,
+    );
   }
 }
