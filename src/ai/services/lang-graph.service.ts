@@ -1,13 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
-import {
-  StateGraph,
-  START,
-  END,
-  MemorySaver,
-  Annotation,
-} from '@langchain/langgraph';
+import { StateGraph, START, END, MemorySaver } from '@langchain/langgraph';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
 import {
   SystemMessage,
@@ -16,121 +10,18 @@ import {
 } from '@langchain/core/messages';
 import { ToolsService } from './tools.service.js';
 import { QdrantService } from './qdrant.service.js';
-import type { UserContext } from '../interfaces/user-context.interface.js';
-import type { AgentState } from '../state/agent.state.js';
-import { ImageAnalysisState } from '../state/image-analysis.state.js';
-import { ListingVerificationState } from '../state/listing-verification.state.js';
+import { AgentAnnotation } from '../state/agent.state.js';
+import { ImageAnalysisAnnotation } from '../state/image-analysis.state.js';
+import { ListingVerificationAnnotation } from '../state/listing-verification.state.js';
+import { BulkImageAnalysisAnnotation } from '../state/bulk-image-analysis.state.js';
 import { z } from 'zod';
 import { AI_MODELS } from '../ai.config.js';
-
-interface ExtractedEntities {
-  location?: string;
-  priceRange?: string;
-  propertyType?: string;
-}
 
 @Injectable()
 export class LangGraphService {
   private readonly logger = new Logger(LangGraphService.name);
   private llm: ChatGoogleGenerativeAI;
   private readonly checkpointer = new MemorySaver(); // In-memory checkpointer for MVP streams
-
-  // Define our channels for state management using the Annotation API
-  private readonly AgentAnnotation = Annotation.Root({
-    messages: Annotation<BaseMessage[]>({
-      reducer: (x: BaseMessage[], y: BaseMessage[]) => x.concat(y),
-      default: () => [],
-    }),
-    userContext: Annotation<UserContext>({
-      reducer: (x: UserContext, y: Partial<UserContext>) => ({ ...x, ...y }),
-      default: (): UserContext => ({ sub: '', username: '', roles: [] }),
-    }),
-    extractedEntities: Annotation<ExtractedEntities>({
-      reducer: (x: ExtractedEntities, y: Partial<ExtractedEntities>) => ({
-        ...x,
-        ...y,
-      }),
-      default: (): ExtractedEntities => ({}),
-    }),
-    currentStep: Annotation<string>({
-      reducer: (_x: string, y: string) => y,
-      default: () => 'init',
-    }),
-  });
-
-  private readonly ImageAnalysisAnnotation = Annotation.Root({
-    messages: Annotation<BaseMessage[]>({
-      reducer: (x: BaseMessage[], y: BaseMessage[]) => x.concat(y),
-      default: () => [],
-    }),
-    imageBuffer: Annotation<Buffer | undefined>({
-      reducer: (_x: Buffer | undefined, y: Buffer | undefined) => y,
-      default: () => undefined,
-    }),
-    listingId: Annotation<string | undefined>({
-      reducer: (_x: string | undefined, y: string | undefined) => y,
-      default: () => undefined,
-    }),
-    imageUrl: Annotation<string | undefined>({
-      reducer: (_x: string | undefined, y: string | undefined) => y,
-      default: () => undefined,
-    }),
-    analysis: Annotation<NonNullable<ImageAnalysisState['analysis']>>({
-      reducer: (
-        x: NonNullable<ImageAnalysisState['analysis']>,
-        y: NonNullable<ImageAnalysisState['analysis']>,
-      ) => ({ ...x, ...y }),
-      default: (): NonNullable<ImageAnalysisState['analysis']> => ({
-        isValidProperty: true,
-        lightingScore: 0,
-        compositionScore: 0,
-        clarityScore: 0,
-        listingRelevance: '',
-        feedback: '',
-      }),
-    }),
-    finalScore: Annotation<number>({
-      reducer: (_x: number, y: number) => y,
-      default: () => 0,
-    }),
-    currentStep: Annotation<string>({
-      reducer: (_x: string, y: string) => y,
-      default: () => 'init',
-    }),
-  });
-
-  private readonly ListingVerificationAnnotation = Annotation.Root({
-    title: Annotation<string>({
-      reducer: (_x: string, y: string) => y,
-      default: () => '',
-    }),
-    description: Annotation<string>({
-      reducer: (_x: string, y: string) => y,
-      default: () => '',
-    }),
-    listingId: Annotation<string | undefined>({
-      reducer: (_x: string | undefined, y: string | undefined) => y,
-      default: () => undefined,
-    }),
-    analysis: Annotation<NonNullable<ListingVerificationState['analysis']>>({
-      reducer: (
-        x: NonNullable<ListingVerificationState['analysis']>,
-        y: NonNullable<ListingVerificationState['analysis']>,
-      ) => ({ ...x, ...y }),
-      default: (): NonNullable<ListingVerificationState['analysis']> => ({
-        isValid: true,
-        safetyScore: 0,
-        professionalismScore: 0,
-        clarityScore: 0,
-        identifiedFeatures: [],
-        feedback: '',
-      }),
-    }),
-    currentStep: Annotation<string>({
-      reducer: (_x: string, y: string) => y,
-      default: () => 'init',
-    }),
-  });
 
   constructor(
     private configService: ConfigService,
@@ -155,7 +46,7 @@ export class LangGraphService {
     const llmWithTools = this.llm.bindTools(tools);
 
     // 2. Define the generic Reasoner node
-    const reasonerNode = async (state: AgentState) => {
+    const reasonerNode = async (state: typeof AgentAnnotation.State) => {
       this.logger.debug(
         `[Reasoner Node] Iteration for user: ${state.userContext.username}`,
       );
@@ -191,7 +82,7 @@ export class LangGraphService {
     };
 
     // 3. Define the simplified RAG node (Knowledge Retrieval)
-    const ragNode = async (state: AgentState) => {
+    const ragNode = async (state: typeof AgentAnnotation.State) => {
       this.logger.debug(`[RAG Node] Retrieving market insights...`);
 
       // Extract the latest user message to run a context search
@@ -215,7 +106,7 @@ export class LangGraphService {
     // Note: LangGraph's JS StateGraph API expects `Annotation`-based channels.
     // Hand-crafted reducer objects are valid at runtime but require a type cast.
 
-    const workflow = new StateGraph(this.AgentAnnotation)
+    const workflow = new StateGraph(AgentAnnotation)
       // Add nodes
       .addNode('rag', ragNode as never)
       .addNode('reasoner', reasonerNode)
@@ -229,7 +120,7 @@ export class LangGraphService {
       // Conditional Routing: Let the LLM decide if it needs to call tools or finish
       .addConditionalEdges(
         'reasoner',
-        ((state: AgentState) => {
+        ((state: typeof AgentAnnotation.State) => {
           const lastMessage = state.messages[state.messages.length - 1];
           // If the model decides to call a tool, route to 'tools'
           if (
@@ -258,9 +149,7 @@ export class LangGraphService {
    */
   createImageAnalysisWorkflow() {
     // 1. Define the Vision Analysis Node
-    const visionNode = async (
-      state: typeof this.ImageAnalysisAnnotation.State,
-    ) => {
+    const visionNode = async (state: typeof ImageAnalysisAnnotation.State) => {
       this.logger.debug(
         `[Vision Node] Analyzing image for listing: ${state.listingId}`,
       );
@@ -419,7 +308,7 @@ Rules:
     };
 
     // 2. Define the Final Score Aggregation Node
-    const aggregatorNode = (state: ImageAnalysisState) => {
+    const aggregatorNode = (state: typeof ImageAnalysisAnnotation.State) => {
       this.logger.debug(`[Aggregator Node] Finalizing score...`);
 
       const {
@@ -449,7 +338,7 @@ Rules:
     };
 
     // 3. Build the Graph
-    const workflow = new StateGraph(this.ImageAnalysisAnnotation)
+    const workflow = new StateGraph(ImageAnalysisAnnotation)
       .addNode('vision', visionNode as never)
       .addNode('aggregator', aggregatorNode as never)
       .addEdge(START, 'vision')
@@ -464,7 +353,7 @@ Rules:
    */
   createListingVerificationWorkflow() {
     const verificationNode = async (
-      state: typeof this.ListingVerificationAnnotation.State,
+      state: typeof ListingVerificationAnnotation.State,
     ) => {
       this.logger.debug(
         `[Verification Node] Analyzing content for: ${state.title}`,
@@ -601,10 +490,271 @@ Listing Description: ${state.description}
       };
     };
 
-    const workflow = new StateGraph(this.ListingVerificationAnnotation)
+    const workflow = new StateGraph(ListingVerificationAnnotation)
       .addNode('verify', verificationNode as never)
       .addEdge(START, 'verify')
       .addEdge('verify', END);
+
+    return workflow.compile();
+  }
+
+  /**
+   * Constructs a specialized LangGraph workflow for Bulk Image Quality Analysis.
+   * Analyzes multiple images in a single Gemini Vision call for cost efficiency
+   * and provides both per-image scores and a collection-level assessment.
+   */
+  createBulkImageAnalysisWorkflow() {
+    // 1. Define the Bulk Vision Analysis Node
+    const bulkVisionNode = async (
+      state: typeof BulkImageAnalysisAnnotation.State,
+    ) => {
+      this.logger.debug(
+        `[Bulk Vision Node] Analyzing ${state.imageBuffers.length} images for listing: ${state.listingId}`,
+      );
+
+      if (!state.imageBuffers.length) {
+        throw new Error('No image buffers provided for bulk analysis');
+      }
+
+      const visionModel = new ChatGoogleGenerativeAI({
+        model: AI_MODELS.VISION_MODEL,
+        temperature: 0,
+        apiKey: this.configService.getOrThrow<string>('GOOGLE_API_KEY'),
+      });
+
+      const structuredModel = visionModel.withStructuredOutput(
+        z.object({
+          individualResults: z.array(
+            z.object({
+              imageIndex: z
+                .number()
+                .describe(
+                  'Zero-based index of the image in the uploaded array',
+                ),
+              isValidProperty: z
+                .boolean()
+                .describe(
+                  'Whether the image is a valid real estate property photo and safe for professional listing.',
+                ),
+              lightingScore: z
+                .number()
+                .describe('Score from 0-100 for lighting quality'),
+              compositionScore: z
+                .number()
+                .describe('Score from 0-100 for composition and framing'),
+              clarityScore: z
+                .number()
+                .describe('Score from 0-100 for image resolution and clarity'),
+              listingRelevance: z
+                .string()
+                .describe(
+                  'Highly specific area of the house (e.g. Master Bedroom, Modern Kitchen)',
+                ),
+              feedback: z
+                .string()
+                .describe(
+                  'Constructive feedback for the photographer in Vietnamese. If rejected, explain why politely.',
+                ),
+            }),
+          ),
+          collectionAnalysis: z.object({
+            hasVariety: z
+              .boolean()
+              .describe(
+                'Whether the image set covers various rooms and areas of the property',
+              ),
+            duplicatesDetected: z
+              .boolean()
+              .describe(
+                'Whether any images appear to be duplicates or extremely similar',
+              ),
+            missingAreas: z
+              .array(z.string())
+              .describe(
+                'List of common room types that are missing from the collection (e.g. Bathroom, Kitchen, Exterior)',
+              ),
+            overallScore: z
+              .number()
+              .describe(
+                'Overall quality score (0-100) for the entire photo collection as a listing',
+              ),
+            suggestion: z
+              .string()
+              .describe(
+                'Suggestions for improving the photo collection, in Vietnamese',
+              ),
+          }),
+        }),
+      );
+
+      const getMimeType = (url: string) => {
+        const ext = url.split('.').pop()?.toLowerCase();
+        switch (ext) {
+          case 'png':
+            return 'image/png';
+          case 'webp':
+            return 'image/webp';
+          case 'heic':
+            return 'image/heic';
+          case 'heif':
+            return 'image/heif';
+          default:
+            return 'image/jpeg';
+        }
+      };
+
+      // Build content array with all images
+      const imageContents = state.imageBuffers.map((buffer, index) => ({
+        type: 'image_url' as const,
+        image_url: `data:${getMimeType(state.imageNames[index] || 'image.jpg')};base64,${buffer.toString('base64')}`,
+      }));
+
+      const imageListText = state.imageNames
+        .map((name, i) => `- Image ${i}: ${name}`)
+        .join('\n');
+
+      const message = new HumanMessage({
+        content: [
+          {
+            type: 'text',
+            text: `
+## C - Capacity
+You specialize in evaluating images for professional real estate listings with strict quality standards.
+You can analyze multiple images simultaneously and provide both individual and collection-level assessments.
+
+## R - Role
+You are a Professional Real Estate Image Auditor & Quality Analyst.
+
+## I - Input
+The input is ${state.imageBuffers.length} images uploaded by the user for a single real estate listing.
+Image list:
+${imageListText}
+
+## S - Steps
+
+For EACH image, perform the following:
+
+Step 1: Safety Gate  
+Determine if the image is a valid real estate property photo.
+
+Reject the image (set isValidProperty = false) if it contains:
+- NSFW, violent, or sensitive content  
+- Memes, screenshots, or non-property images  
+- Random people not part of a property tour  
+- Any content inappropriate for a professional listing  
+
+If rejected:
+- Set all scores to 0  
+- Provide polite rejection feedback in Vietnamese  
+- Skip remaining steps for that image  
+
+---
+
+Step 2: Quality Scoring (only if Step 1 passes)
+
+Evaluate using the following rubrics:
+
+Lighting Score (0-100):
+- 0-30: Very dark, overexposed, or unnatural lighting  
+- 31-60: Adequate but uneven lighting  
+- 61-80: Good lighting with minor issues  
+- 81-100: Professional lighting  
+
+Composition Score (0-100):
+- 0-30: Blurry, tilted, poorly framed  
+- 31-60: Acceptable but not ideal  
+- 61-80: Well-composed  
+- 81-100: Professional composition  
+
+Clarity Score (0-100):
+- 0-30: Very low resolution, heavy noise  
+- 31-60: Some noise or compression artifacts  
+- 61-80: Clear image  
+- 81-100: High-resolution and sharp  
+
+---
+
+Step 3: Room Identification  
+Identify the specific area shown (e.g., Bedroom, Kitchen, Bathroom, Exterior).
+
+---
+
+Step 4: Collection Analysis (after all individual analyses)
+Evaluate the ENTIRE set of images as a collection:
+- Check if images cover a variety of rooms and areas  
+- Detect duplicate or extremely similar images  
+- Identify which common room types are missing  
+- Calculate an overall collection quality score  
+- Provide suggestions for improvement in Vietnamese  
+
+## P - Persona
+Be strict, professional, and objective. Avoid emotional or casual language.
+
+## E - Expected Output
+
+Return the result in JSON format with two sections:
+
+1. "individualResults": Array of per-image results, each containing:
+   { "imageIndex": number, "isValidProperty": boolean, "lightingScore": number, "compositionScore": number, "clarityScore": number, "listingRelevance": string, "feedback": string }
+
+2. "collectionAnalysis": Object containing:
+   { "hasVariety": boolean, "duplicatesDetected": boolean, "missingAreas": string[], "overallScore": number, "suggestion": string }
+
+Rules:
+- All scores must be integers from 0 to 100  
+- feedback and suggestion must be written in Vietnamese  
+- If isValidProperty = false → all scores for that image must be 0  
+- imageIndex must match the zero-based index of each image  
+- Do not include any text outside the JSON`,
+          },
+          ...imageContents,
+        ],
+      });
+
+      const result = await structuredModel.invoke([message]);
+
+      return {
+        individualResults: result.individualResults,
+        collectionAnalysis: result.collectionAnalysis,
+        currentStep: 'bulk_vision_analysis_completed',
+      };
+    };
+
+    // 2. Define the Bulk Aggregator Node
+    const bulkAggregatorNode = (
+      state: typeof BulkImageAnalysisAnnotation.State,
+    ) => {
+      this.logger.debug(`[Bulk Aggregator Node] Computing final scores...`);
+
+      const resultsWithScores = (state.individualResults || []).map(
+        (result) => {
+          if (!result.isValidProperty) {
+            return { ...result, finalScore: 0 };
+          }
+
+          const finalScore = Math.round(
+            result.lightingScore * 0.4 +
+              result.compositionScore * 0.3 +
+              result.clarityScore * 0.3,
+          );
+
+          return { ...result, finalScore };
+        },
+      );
+
+      return {
+        individualResults: resultsWithScores,
+        currentStep: 'bulk_scoring_completed',
+      };
+    };
+
+    // 3. Build the Graph
+    const workflow = new StateGraph(BulkImageAnalysisAnnotation)
+      .addNode('bulkVision', bulkVisionNode as never)
+      .addNode('bulkAggregator', bulkAggregatorNode as never)
+      .addEdge(START, 'bulkVision')
+      .addEdge('bulkVision', 'bulkAggregator')
+      .addEdge('bulkAggregator', END);
 
     return workflow.compile();
   }

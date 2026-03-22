@@ -5,13 +5,15 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  UploadedFiles,
   BadRequestException,
   Res,
   Header,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { ImageAnalysisService } from './services/image-analysis.service';
 import { ImageUploadDto } from './dto/image-upload.dto';
+import { BulkImageUploadDto } from './dto/bulk-image-upload.dto';
 import { ImageAnalysisResponseDto } from './dto/image-analysis-response.dto';
 import { ApiKeyGuard } from '../auth/guards/api-key/api-key.guard';
 import {
@@ -147,6 +149,76 @@ export class ImageAnalysisController {
       const stream = this.imageAnalysisService.analyzeImageQualityStream(
         file.buffer,
         file.originalname,
+        listingId,
+      );
+
+      for await (const event of stream) {
+        res.write(`event: ${event.event}\n`);
+        res.write(`data: ${JSON.stringify(event.data)}\n\n`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      res.write(`event: error\n`);
+      res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
+    } finally {
+      res.end();
+    }
+  }
+
+  @Post('analyze-quality/bulk/stream')
+  @UseInterceptors(FilesInterceptor('files', 20, fileInterceptorOptions))
+  @Header('Content-Type', 'text/event-stream')
+  @Header('Cache-Control', 'no-cache')
+  @Header('Connection', 'keep-alive')
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Analyze multiple images in bulk with streaming response (SSE)',
+    description:
+      'Analyzes multiple images in a single Gemini Vision call for cost efficiency. ' +
+      'Returns per-image quality scores and a collection-level assessment (variety, duplicates, missing areas). ' +
+      'Events: `start`, `bulk_vision_complete`, `bulk_score_complete`, `done`.',
+  })
+  @ApiBody({
+    description:
+      'Array of image files (max 20) and optional listing ID for bulk analysis.',
+    type: BulkImageUploadDto,
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Streaming SSE response with per-image results and collection analysis.',
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'No files uploaded, too many files, or invalid file type/size.',
+  })
+  async analyzeQualityBulkStream(
+    @UploadedFiles()
+    files: {
+      buffer: Buffer;
+      originalname: string;
+      mimetype: string;
+      size: number;
+    }[],
+    @Body('listingId') listingId: string | undefined,
+    @Res() res: Response,
+  ): Promise<void> {
+    if (!files || files.length === 0) {
+      throw new BadRequestException(
+        'No files uploaded. Please provide at least one image file.',
+      );
+    }
+
+    if (files.length > 20) {
+      throw new BadRequestException(
+        `Too many files (${files.length}). Maximum is 20 images per request.`,
+      );
+    }
+
+    try {
+      const stream = this.imageAnalysisService.analyzeBulkImageQualityStream(
+        files.map((f) => ({ buffer: f.buffer, originalname: f.originalname })),
         listingId,
       );
 

@@ -112,4 +112,64 @@ export class ImageAnalysisService {
       data: { message: 'Analysis complete' },
     };
   }
+
+  async *analyzeBulkImageQualityStream(
+    files: { buffer: Buffer; originalname: string }[],
+    listingId?: string,
+  ): AsyncGenerator<{ event: string; data: Record<string, unknown> }> {
+    this.logger.log(
+      `[Bulk Stream] Analyzing ${files.length} images for listing: ${listingId || 'manual-upload'}`,
+    );
+
+    const workflow = this.langGraphService.createBulkImageAnalysisWorkflow();
+
+    yield {
+      event: 'start',
+      data: {
+        message: 'Bulk image analysis started',
+        imageCount: files.length,
+        listingId: listingId || 'manual-upload',
+        imageNames: files.map((f) => f.originalname),
+      },
+    };
+
+    const stream = await workflow.stream({
+      imageBuffers: files.map((f) => f.buffer),
+      imageNames: files.map((f) => f.originalname),
+      listingId: listingId || 'manual-upload',
+      messages: [],
+    } as never);
+
+    for await (const chunk of stream) {
+      for (const [nodeName, nodeOutput] of Object.entries(chunk)) {
+        const output = nodeOutput as Record<string, unknown>;
+
+        if (nodeName === 'bulkVision' && output.individualResults) {
+          yield {
+            event: 'bulk_vision_complete',
+            data: {
+              step: 'bulk_vision_analysis_completed',
+              individualResults: output.individualResults,
+              collectionAnalysis: output.collectionAnalysis,
+            },
+          };
+        }
+
+        if (nodeName === 'bulkAggregator') {
+          yield {
+            event: 'bulk_score_complete',
+            data: {
+              step: 'bulk_scoring_completed',
+              individualResults: output.individualResults,
+            },
+          };
+        }
+      }
+    }
+
+    yield {
+      event: 'done',
+      data: { message: 'Bulk analysis complete' },
+    };
+  }
 }
