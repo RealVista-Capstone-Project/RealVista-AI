@@ -1,16 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { LangGraphService } from './lang-graph.service';
 import { ListingVerificationState } from '../state/listing-verification.state';
-
-export interface ListingVerificationResult {
-  isValid: boolean;
-  safetyScore: number;
-  professionalismScore: number;
-  clarityScore: number;
-  identifiedFeatures: string[];
-  feedback: string;
-  currentStep: string;
-}
+import { ListingVerificationResult } from '../interfaces';
 
 @Injectable()
 export class ListingVerificationService {

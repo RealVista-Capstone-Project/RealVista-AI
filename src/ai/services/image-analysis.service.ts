@@ -1,21 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { LangGraphService } from './lang-graph.service';
 import { ImageAnalysisState } from '../state/image-analysis.state';
-
-export interface ImageAnalysisResult {
-  analysis?: {
-    isValidProperty?: boolean;
-    lightingScore: number;
-    compositionScore: number;
-    clarityScore: number;
-    listingRelevance: string;
-    feedback: string;
-  };
-  finalScore: number;
-  currentStep: string;
-  listingId: string;
-  imageUrl: string;
-}
+import { ImageAnalysisResult } from '../interfaces';
 
 @Injectable()
 export class ImageAnalysisService {
