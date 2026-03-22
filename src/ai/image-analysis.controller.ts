@@ -26,7 +26,7 @@ import {
 } from '@nestjs/swagger';
 import type { Response } from 'express';
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_MIME_TYPES = /^image\/(jpeg|png|webp|heic|heif)$/;
 
 const fileInterceptorOptions = {
@@ -166,7 +166,7 @@ export class ImageAnalysisController {
   }
 
   @Post('analyze-quality/bulk/stream')
-  @UseInterceptors(FilesInterceptor('files', 20, fileInterceptorOptions))
+  @UseInterceptors(FilesInterceptor('files', 10, fileInterceptorOptions))
   @Header('Content-Type', 'text/event-stream')
   @Header('Cache-Control', 'no-cache')
   @Header('Connection', 'keep-alive')
@@ -180,7 +180,7 @@ export class ImageAnalysisController {
   })
   @ApiBody({
     description:
-      'Array of image files (max 20) and optional listing ID for bulk analysis.',
+      'Array of image files (max 10) and optional listing ID for bulk analysis.',
     type: BulkImageUploadDto,
   })
   @ApiResponse({
@@ -210,9 +210,9 @@ export class ImageAnalysisController {
       );
     }
 
-    if (files.length > 20) {
+    if (files.length > 10) {
       throw new BadRequestException(
-        `Too many files (${files.length}). Maximum is 20 images per request.`,
+        `Too many files (${files.length}). Maximum is 10 images per request.`,
       );
     }
 

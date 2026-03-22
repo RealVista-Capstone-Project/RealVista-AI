@@ -5,7 +5,7 @@ export class BulkImageUploadDto {
     type: 'array',
     items: { type: 'string', format: 'binary' },
     description:
-      'Array of image files to analyze (max 20). Supported formats: JPEG, PNG, WebP, HEIC, HEIF.',
+      'Array of image files to analyze (max 10). Supported formats: JPEG, PNG, WebP, HEIC, HEIF.',
   })
   files: unknown[];
 
