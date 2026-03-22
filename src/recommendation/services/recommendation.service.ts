@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
+import { Pool } from 'pg';
 import { UserBehaviorVectorService } from './user-behavior-vector.service';
 import type {
   RecommendationResponse,
@@ -20,9 +21,10 @@ import type { BehaviorEventDto } from '../dto/user-behavior.dto';
  *    d) LLM returns a ranked list of listing IDs with reasons
  */
 @Injectable()
-export class RecommendationService {
+export class RecommendationService implements OnModuleDestroy {
   private readonly logger = new Logger(RecommendationService.name);
   private readonly llm: ChatGoogleGenerativeAI;
+  private readonly pgPool: Pool;
 
   /** Event type weights for building behavior summaries */
   private static readonly EVENT_WEIGHTS: Record<string, number> = {
@@ -43,6 +45,18 @@ export class RecommendationService {
       temperature: 0.3,
       apiKey: this.configService.get<string>('GOOGLE_API_KEY'),
     });
+
+    this.pgPool = new Pool({
+      host: this.configService.get<string>('DB_HOST') || 'localhost',
+      port: this.configService.get<number>('DB_PORT') || 5432,
+      database: this.configService.get<string>('DB_NAME') || 'realvista_test',
+      user: this.configService.get<string>('DB_USER') || 'postgres',
+      password: this.configService.get<string>('DB_PASSWORD') || 'postgres',
+    });
+  }
+
+  async onModuleDestroy() {
+    await this.pgPool.end();
   }
 
   // ─── Public API ────────────────────────────────────────────────
@@ -83,6 +97,9 @@ export class RecommendationService {
    *  4. Send summary + candidate listing IDs to Gemini for ranking + reasoning
    *  5. Return the ranked listing IDs with AI-generated reasons
    */
+  /**
+   * Generate personalized recommendations for a user.
+   */
   async getRecommendations(
     userId: string,
     limit: number = 10,
@@ -103,36 +120,96 @@ export class RecommendationService {
       };
     }
 
-    // 2. Build weighted behavior summary
-    const behaviorSummary = this.buildBehaviorSummary(behaviorHistory);
-    this.logger.debug(`Behavior summary: ${behaviorSummary}`);
+    // 2. Fetch interacted listings full details from PostgreSQL
+    const interactedIds = Array.from(
+      new Set(behaviorHistory.map((b) => b.listingId)),
+    );
+    const { rows: interactedRows } = await this.pgPool.query(
+      `
+      SELECT l.*, p.*, pt.name as property_type_name
+      FROM listings l
+      JOIN properties p ON l.property_id = p.property_id
+      JOIN property_types pt ON p.property_type_id = pt.property_type_id
+      WHERE l.listing_id = ANY($1::uuid[])
+    `,
+      [interactedIds],
+    );
 
-    // 3. Find similar-behavior listings from other users (collaborative signal)
+    const interactedContext = this.buildInteractedContext(
+      behaviorHistory,
+      interactedRows,
+    );
+    const behaviorSummary = this.buildBehaviorSummary(behaviorHistory);
+
+    // 3. Find similar users behavior (Collaborative signal)
     const collaborativeListings =
       await this.behaviorVectorService.findSimilarBehaviorListings(
         behaviorSummary,
         userId,
-        limit * 3, // fetch more candidates than needed so LLM can rank
+        10,
       );
 
-    // 4. Merge the user's own most-interacted listings + collaborative candidates
-    const candidateListingIds = this.mergeCandidates(
-      behaviorHistory,
-      collaborativeListings,
-      limit * 2,
+    // 4. Smart Candidate Fetch (Max 20 Candidates to prioritize performance & AI context window)
+    const candidates = await this.getCandidateListings(
+      interactedRows,
+      collaborativeListings.map((c) => c.listingId),
+      20,
     );
 
-    // 5. Ask Gemini to rank and explain
-    const recommendations = await this.rankWithLLM(
+    const candidateContext = candidates
+      .map((c) => this.formatListingForLLM(c))
+      .join('\n');
+
+    // 5. Ask Gemini to evaluate features and rank
+    const prompt = `You are a real estate recommendation engine for the RealVista platform.
+
+Here are the listings the user has interacted with most (along with their engagement score):
+${interactedContext}
+
+Evaluate what the user is looking for based on the TYPE, PRICE, AMENITIES, and FEATURES of their interacted listings.
+
+Below are candidate listings fetched from our database:
+${candidateContext}
+
+=== INSTRUCTIONS ===
+1. Analyze the user's preferences from their highly engaged listings above.
+2. Select and rank the TOP ${limit} most relevant candidate listings for this user.
+3. For each recommendation, provide a brief human-readable reason (1-2 sentences) why it matches their preferences (e.g. price, amenities).
+4. Return EXACTLY a JSON array (no markdown, no code fences) with this structure:
+[
+  {
+    "listingId": "<uuid>",
+    "reason": "<explanation>",
+    "score": <0.0 to 1.0>
+  }
+]
+5. Return at most ${limit} items, sorted by score descending.
+6. ONLY return the JSON array, nothing else.`;
+
+    const recommendations = await this.parseLLMResponse(
+      prompt,
       userId,
-      behaviorSummary,
-      candidateListingIds,
+      candidates.map((c) => c.listing_id),
       limit,
     );
 
+    // 6. Map rich DB row data back to the recommendations response
+    const listingDataMap = new Map<string, Record<string, unknown>>();
+    for (const row of [...candidates, ...interactedRows]) {
+      listingDataMap.set(
+        String(row.listing_id),
+        row as Record<string, unknown>,
+      );
+    }
+
+    const enrichedRecommendations = recommendations.map((r) => ({
+      ...r,
+      listingData: listingDataMap.get(r.listingId),
+    }));
+
     return {
       userId,
-      recommendations,
+      recommendations: enrichedRecommendations,
       generatedAt: new Date().toISOString(),
       behaviorSummary,
     };
@@ -140,10 +217,111 @@ export class RecommendationService {
 
   // ─── Internals ─────────────────────────────────────────────────
 
-  /**
-   * Build a natural-language summary of the user's behavior for
-   * the LLM prompt. Groups by listing and weighs event types.
-   */
+  private async getCandidateListings(
+    interactedListings: any[],
+    collaborativeIds: string[],
+    limit: number,
+  ): Promise<any[]> {
+    let query = `
+      SELECT l.*, p.*, pt.name as property_type_name
+      FROM listings l
+      JOIN properties p ON l.property_id = p.property_id
+      JOIN property_types pt ON p.property_type_id = pt.property_type_id
+      WHERE l.status = 'PUBLISHED'
+    `;
+    const params: any[] = [];
+    const conditions: string[] = [];
+
+    if (collaborativeIds.length > 0) {
+      params.push(collaborativeIds);
+      conditions.push(`l.listing_id = ANY($${params.length}::uuid[])`);
+    }
+
+    if (interactedListings.length > 0) {
+      const prices = interactedListings.map((r) => Number(r.price));
+      const minPrice = Math.min(...prices) * 0.7; // ±30% range
+      const maxPrice = Math.max(...prices) * 1.3;
+      const types = Array.from(
+        new Set(interactedListings.map((r) => String(r.property_type_id))),
+      );
+      const listingTypes = Array.from(
+        new Set(interactedListings.map((r) => String(r.listing_type))),
+      );
+
+      params.push(minPrice);
+      const minPIdx = params.length;
+      params.push(maxPrice);
+      const maxPIdx = params.length;
+      params.push(listingTypes);
+      const ltIdx = params.length;
+      params.push(types);
+      const tIdx = params.length;
+
+      conditions.push(
+        `(l.price BETWEEN $${minPIdx} AND $${maxPIdx} AND l.listing_type = ANY($${ltIdx}) AND p.property_type_id = ANY($${tIdx}::uuid[]))`,
+      );
+    }
+
+    if (conditions.length > 0) {
+      query += ` AND (${conditions.join(' OR ')})`;
+    }
+
+    query += ` LIMIT ${limit}`;
+
+    try {
+      const { rows } = await this.pgPool.query(query, params);
+      return rows;
+    } catch (e) {
+      this.logger.error(
+        'Error fetching candidates from PostgreSQL',
+        e instanceof Error ? e.stack : String(e),
+      );
+      return [];
+    }
+  }
+
+  private buildInteractedContext(history: Array<any>, rows: any[]): string {
+    const rowMap = new Map();
+    for (const r of rows) rowMap.set(String(r.listing_id), r);
+
+    const listingWeights = new Map<string, number>();
+    for (const h of history) {
+      const w = RecommendationService.EVENT_WEIGHTS[h.eventType] ?? 1;
+      listingWeights.set(
+        h.listingId,
+        (listingWeights.get(h.listingId) ?? 0) + w,
+      );
+    }
+
+    const sortedIds = Array.from(listingWeights.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([id]) => id)
+      .slice(0, 5); // Pick top 5 most engaged
+
+    return sortedIds
+      .map((id) => {
+        const row = rowMap.get(id);
+        if (!row) return '';
+        return `[Engagement: ${listingWeights.get(id)}] ${this.formatListingForLLM(row)}`;
+      })
+      .filter((s) => s)
+      .join('\n');
+  }
+
+  private formatListingForLLM(row: any): string {
+    return JSON.stringify({
+      listingId: row.listing_id,
+      transactionType: row.listing_type,
+      propertyType: row.property_type_name,
+      price: Number(row.price),
+      address: row.street_address,
+      attributes: row.extra_attributes,
+      description: row.descriptions
+        ? String(row.descriptions).substring(0, 200) + '...'
+        : '',
+    });
+  }
+
   private buildBehaviorSummary(
     history: Array<{
       listingId: string;
@@ -152,7 +330,6 @@ export class RecommendationService {
       timestamp: string;
     }>,
   ): string {
-    // Group events by listing
     const listingEvents = new Map<
       string,
       { events: string[]; totalWeight: number; totalDuration: number }
@@ -171,7 +348,6 @@ export class RecommendationService {
       listingEvents.set(event.listingId, existing);
     }
 
-    // Sort by total weight (most engaged first)
     const sorted = Array.from(listingEvents.entries()).sort(
       (a, b) => b[1].totalWeight - a[1].totalWeight,
     );
@@ -198,89 +374,13 @@ export class RecommendationService {
     );
   }
 
-  /**
-   * Merge the user's own heavily-interacted listings with
-   * collaborative-filtering candidates (other users' listings).
-   * Returns unique listing IDs.
-   */
-  private mergeCandidates(
-    ownHistory: Array<{ listingId: string; eventType: string }>,
-    collaborativeListings: Array<{ listingId: string; score: number }>,
-    maxCandidates: number,
-  ): string[] {
-    const seen = new Set<string>();
-    const result: string[] = [];
-
-    // Add collaborative candidates first (they are NEW to this user)
-    for (const cl of collaborativeListings) {
-      if (!seen.has(cl.listingId)) {
-        seen.add(cl.listingId);
-        result.push(cl.listingId);
-      }
-    }
-
-    // Add user's own top listings (for "more like this" recommendations)
-    const ownListingCounts = new Map<string, number>();
-    for (const h of ownHistory) {
-      const w = RecommendationService.EVENT_WEIGHTS[h.eventType] ?? 1;
-      ownListingCounts.set(
-        h.listingId,
-        (ownListingCounts.get(h.listingId) ?? 0) + w,
-      );
-    }
-    const sortedOwn = Array.from(ownListingCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([id]) => id);
-
-    for (const id of sortedOwn) {
-      if (!seen.has(id)) {
-        seen.add(id);
-        result.push(id);
-      }
-    }
-
-    return result.slice(0, maxCandidates);
-  }
-
-  /**
-   * Ask Gemini to rank the candidate listings and provide reasons.
-   * The prompt includes the behavior summary and candidate listing IDs.
-   * Returns a structured array of { listingId, reason, score }.
-   */
-  private async rankWithLLM(
+  private async parseLLMResponse(
+    prompt: string,
     userId: string,
-    behaviorSummary: string,
-    candidateListingIds: string[],
+    fallbackIds: string[],
     limit: number,
   ): Promise<RecommendedListing[]> {
-    if (candidateListingIds.length === 0) {
-      return [];
-    }
-
-    const prompt = `You are a real estate recommendation engine for the RealVista platform.
-
-Given the following user behavior data and candidate listing IDs, rank the TOP ${limit} most relevant listings for this user and explain WHY each listing is recommended.
-
-=== USER BEHAVIOR ===
-${behaviorSummary}
-
-=== CANDIDATE LISTING IDS ===
-${candidateListingIds.join('\n')}
-
-=== INSTRUCTIONS ===
-1. Analyze the user's behavior patterns (what types of listings they view, click, bookmark most).
-2. Rank the candidate listings by predicted relevance to this user.
-3. For each recommendation, provide a brief human-readable reason.
-4. Return EXACTLY a JSON array (no markdown, no code fences) with this structure:
-[
-  {
-    "listingId": "<uuid>",
-    "reason": "<1-2 sentence explanation>",
-    "score": <0.0 to 1.0>
-  }
-]
-5. Return at most ${limit} items, sorted by score descending.
-6. ONLY return the JSON array, nothing else.`;
+    if (fallbackIds.length === 0) return [];
 
     try {
       const response = await this.llm.invoke(prompt);
@@ -289,7 +389,6 @@ ${candidateListingIds.join('\n')}
           ? response.content
           : JSON.stringify(response.content);
 
-      // Strip markdown code fences if the model wraps them
       const cleaned = content
         .replace(/```json\s*/gi, '')
         .replace(/```\s*/g, '')
@@ -297,7 +396,6 @@ ${candidateListingIds.join('\n')}
 
       const parsed = JSON.parse(cleaned) as RecommendedListing[];
 
-      // Validate and sanitize
       return parsed
         .filter(
           (item) =>
@@ -317,10 +415,10 @@ ${candidateListingIds.join('\n')}
         error instanceof Error ? error.stack : String(error),
       );
 
-      // Fallback: return candidates with generic reasons
-      return candidateListingIds.slice(0, limit).map((id, idx) => ({
+      return fallbackIds.slice(0, limit).map((id, idx) => ({
         listingId: id,
-        reason: 'Recommended based on similar user behavior patterns',
+        reason:
+          'Recommended based on similar attributes to your historical preferences.',
         score: Math.max(0.1, 1 - idx * 0.1),
       }));
     }

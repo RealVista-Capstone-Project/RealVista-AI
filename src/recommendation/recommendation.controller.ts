@@ -58,6 +58,7 @@ export class RecommendationController {
   })
   @ApiResponse({ status: 401, description: 'Invalid API key.' })
   async getRecommendations(@Body() dto: GetRecommendationsDto) {
+    console.log('GetRecommendationsDto', dto);
     return this.recommendationService.getRecommendations(
       dto.userId,
       dto.limit ?? 10,
