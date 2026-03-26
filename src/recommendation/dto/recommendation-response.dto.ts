@@ -7,6 +7,9 @@ export interface RecommendedListing {
 
   /** Relevance score (0.0 - 1.0) */
   score: number;
+
+  /** Enriched listing details fetched directly from the database */
+  listingData?: Record<string, unknown>;
 }
 
 export interface RecommendationResponse {
