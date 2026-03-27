@@ -6,6 +6,8 @@ import { ImageAnalysisService } from './services/image-analysis.service';
 import { ListingVerificationService } from './services/listing-verification.service';
 import { ToolsService } from './services/tools.service';
 import { QdrantService } from './services/qdrant.service';
+import { BackendApiService } from './services/backend-api.service';
+import { RedisCheckpointerService } from './services/redis-checkpointer.service';
 import { HttpModule } from '@nestjs/axios';
 import { ImageAnalysisController } from './image-analysis.controller';
 import { ListingVerificationController } from './listing-verification.controller';
@@ -24,7 +26,9 @@ import { ListingVerificationController } from './listing-verification.controller
     ListingVerificationService,
     ToolsService,
     QdrantService,
+    BackendApiService,
+    RedisCheckpointerService,
   ],
-  exports: [AiService],
+  exports: [AiService, QdrantService, BackendApiService],
 })
 export class AiModule {}

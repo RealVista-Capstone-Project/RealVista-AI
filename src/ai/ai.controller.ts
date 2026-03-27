@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Res } from '@nestjs/common';
+import { Controller, Post, Body, Res, Header, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { AiService } from './services/ai.service';
 import { ChatQueryDto } from './dto/chat-query.dto';
@@ -11,7 +11,6 @@ import {
   ApiSecurity,
 } from '@nestjs/swagger';
 import { ApiKeyGuard } from '../auth/guards/api-key/api-key.guard';
-import { UseGuards } from '@nestjs/common';
 
 @ApiTags('ai')
 @ApiSecurity('api-key')
@@ -20,37 +19,49 @@ import { UseGuards } from '@nestjs/common';
 export class AiController {
   constructor(private readonly aiService: AiService) {}
 
+  /**
+   * Chat endpoint — responds as an SSE stream.
+   *
+   * Event format:
+   *   event: start      → data: { "threadId": "..." }
+   *   event: token      → data: { "content": "..." }   (multiple)
+   *   event: tool_start → data: { "name": "..." }
+   *   event: tool_end   → data: { "name": "..." }
+   *   event: done       → data: { "threadId": "..." }
+   *   event: error      → data: { "message": "..." }
+   *
+   * Pass `threadId` in the request body to continue an existing conversation.
+   * Omit it (or set to null) to start a new thread — the server will assign one
+   * and return it in the `start` event.
+   */
   @Post('chat')
-  @ApiOperation({ summary: 'Process a chat query synchronously' })
+  @Header('Content-Type', 'text/event-stream')
+  @Header('Cache-Control', 'no-cache')
+  @Header('Connection', 'keep-alive')
+  @ApiOperation({
+    summary: 'Chat with the AI agent (SSE token stream)',
+    description:
+      'Opens a Server-Sent Events stream. Each SSE event has a named `event:` field. ' +
+      'Reconnect using the `threadId` from the `start` event to continue the conversation.',
+  })
   @ApiResponse({
     status: 200,
-    description: 'The final response from the AI agent.',
+    description:
+      'SSE stream: start → token(s) → [tool_start/tool_end] → done | error',
   })
-  async chat(@Body() chatQueryDto: ChatQueryDto, @User() user: UserContext) {
-    return this.aiService.processSync(chatQueryDto.prompt, user);
-  }
-
-  @Post('stream')
-  @ApiOperation({ summary: 'Stream the chat query response via SSE' })
-  @ApiResponse({ status: 200, description: 'SSE stream of events.' })
-  async stream(
+  async chat(
     @Body() chatQueryDto: ChatQueryDto,
     @User() user: UserContext,
     @Res() res: Response,
   ) {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-
-    const threadId = chatQueryDto.threadId || 'new-thread'; // Simplified for now
-    const eventStream = this.aiService.processStream(
+    const sseStream = this.aiService.processChatSse(
       chatQueryDto.prompt,
-      threadId,
+      chatQueryDto.threadId,
       user,
     );
 
-    for await (const event of eventStream) {
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    for await (const { event, data } of sseStream) {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     }
 
     res.end();

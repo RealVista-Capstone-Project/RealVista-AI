@@ -2,158 +2,99 @@ import { Injectable, Logger } from '@nestjs/common';
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import type { StructuredToolInterface } from '@langchain/core/tools';
+import { BackendApiService } from './backend-api.service.js';
 
 @Injectable()
 export class ToolsService {
   private readonly logger = new Logger(ToolsService.name);
 
+  constructor(private readonly backendApiService: BackendApiService) {}
+
   /**
-   * Generates all available tools for the Real Estate Agent.
-   * Based on the user roles and context, we can conditionally add tools here.
+   * Returns the tools available for the Real Estate Chat Agent.
+   * RBAC can conditionally add premium tools based on user roles.
    */
   getAvailableTools(userRoles: string[]): StructuredToolInterface[] {
     const defaultTools: StructuredToolInterface[] = [
       this.searchPropertyDatabase(),
-      this.predictPropertyPrice(),
-      this.getComparableProperties(),
-      this.getRecommendations(),
     ];
 
-    // Example of Role-based tool access (RBAC)
+    // Premium tools (e.g. deep market analysis) can be unlocked here
     if (
       userRoles.includes('PREMIUM_SUBSCRIBER') ||
       userRoles.includes('ADMIN')
     ) {
-      // Add exclusive tools like Deep Market Analysis
-      this.logger.debug('Adding premium market analysis tools for user.');
+      this.logger.debug('Adding premium tools for user.');
+      // TODO: add premium tools when available
     }
 
     return defaultTools;
   }
 
-  // 1. Tool-calling Agent: Query internal property database
+  /**
+   * Search listings from the Spring Boot backend.
+   * Returns up to 10 matching listings as compact JSON for the LLM to reason over.
+   */
   private searchPropertyDatabase() {
     return tool(
-      ({ location, maxPrice, propertyType }) => {
+      async ({ locationId, minPrice, maxPrice, listingType, propertyType }) => {
         this.logger.log(
-          `Searching DB for: ${location}, <${maxPrice}, type: ${propertyType}`,
+          `[Tool] search_property_database — locationId="${locationId}", type=${listingType}, propertyType=${propertyType}, price=${minPrice}–${maxPrice}`,
         );
-        // TODO: Call your actual Backend API here
-        return JSON.stringify([
-          {
-            id: '101',
-            title: 'Modern Villa Da Nang',
-            price: 2800000000,
-            type: 'Villa',
-          },
-          {
-            id: '102',
-            title: 'Cozy Apartment Da Nang',
-            price: 1500000000,
-            type: 'Apartment',
-          },
-        ]);
+
+        const results = await this.backendApiService.searchListings({
+          locationId,
+          minPrice,
+          maxPrice,
+          listingType,
+          propertyType,
+          size: 10,
+        });
+
+        if (!results.length) {
+          return JSON.stringify({
+            found: 0,
+            message:
+              'Không tìm thấy bất động sản nào phù hợp với tiêu chí tìm kiếm. Hãy thử mở rộng điều kiện tìm kiếm.',
+          });
+        }
+
+        return JSON.stringify({ found: results.length, listings: results });
       },
       {
         name: 'search_property_database',
         description:
-          'Queries the internal real estate database for active listings matching criteria. Always call this when a user asks to find or search for properties.',
+          'Searches the RealVista database for active property listings that match the given criteria. ' +
+          'Call this whenever the user wants to find, browse, or search for properties. ' +
+          'Always call this tool before presenting any listing — never invent property data.',
         schema: z.object({
-          location: z
+          locationId: z
             .string()
-            .describe('The geographical location, eg city or district.'),
+            .describe(
+              'UUID of the city, district, or ward to search in. ' +
+                'Extract this from the [RAG Knowledge] section — look for "(locationId: ...)". ' +
+                'NEVER guess or fabricate a locationId. If you cannot find a matching location, ask the user to clarify.',
+            ),
+          minPrice: z
+            .number()
+            .optional()
+            .describe('Minimum price in VND (e.g. 1000000000 for 1 tỷ).'),
           maxPrice: z
             .number()
             .optional()
-            .describe('Maximum allowed price in VND.'),
+            .describe('Maximum price in VND (e.g. 3000000000 for 3 tỷ).'),
+          listingType: z
+            .enum(['SALE', 'RENT'])
+            .optional()
+            .describe(
+              'Whether to search for properties for sale (SALE) or for rent (RENT). Omit if not specified.',
+            ),
           propertyType: z
             .string()
             .optional()
-            .describe('Type of property: Apartment, Villa, Land, etc.'),
-        }),
-      },
-    );
-  }
-
-  // 2. Trigger price prediction model
-  private predictPropertyPrice() {
-    return tool(
-      ({ propertyId }) => {
-        this.logger.log(
-          `Triggering Price Model for Property ID: ${propertyId}`,
-        );
-        // TODO: Call your ML Backend API
-        return JSON.stringify({
-          estimated_value: 2950000000,
-          confidence_score: 0.88,
-        });
-      },
-      {
-        name: 'predict_property_price',
-        description:
-          'Triggers the AI price prediction model to estimate the current market value of a specific property.',
-        schema: z.object({
-          propertyId: z
-            .string()
-            .describe('The unique identifier of the property.'),
-        }),
-      },
-    );
-  }
-
-  // 3. Retrieve comparable properties
-  private getComparableProperties() {
-    return tool(
-      ({ propertyId }) => {
-        this.logger.log(`Fetching comps for Property ID: ${propertyId}`);
-        // TODO: Call Backend Comps API
-        return JSON.stringify([
-          {
-            title: 'Neighboring Villa 1',
-            sold_price: 2700000000,
-            date: '2026-01-15',
-          },
-          {
-            title: 'Neighboring Villa 2',
-            sold_price: 3100000000,
-            date: '2025-11-20',
-          },
-        ]);
-      },
-      {
-        name: 'get_comparable_properties',
-        description:
-          'Retrieves recently sold or listed comparable properties (comps) similar to a given property to evaluate market status.',
-        schema: z.object({
-          propertyId: z
-            .string()
-            .describe('The unique identifier of the target property.'),
-        }),
-      },
-    );
-  }
-
-  // 4. Recommendation Engine
-  private getRecommendations() {
-    return tool(
-      ({ userContext }) => {
-        this.logger.log(
-          `Fetching recommendations for user context: ${JSON.stringify(userContext)}`,
-        );
-        // TODO: Call Backend Recommendation Engine API
-        return JSON.stringify([
-          { title: 'Seaview Penthouse', reason: 'Matches your past views' },
-          { title: 'Suburban Tech Hub Condo', reason: 'High projected ROI' },
-        ]);
-      },
-      {
-        name: 'get_recommendations',
-        description:
-          'Fetches personalized property recommendations for the user based on their historical behavior and preferences.',
-        schema: z.object({
-          userContext: z
-            .string()
-            .describe('A summary of what the user is looking for.'),
+            .describe(
+              'Type of property, e.g. "Apartment" (căn hộ), "Villa" (biệt thự), "Land" (đất nền), "House" (nhà phố).',
+            ),
         }),
       },
     );

@@ -3,7 +3,6 @@ import { LangGraphService } from './lang-graph.service';
 import { HumanMessage } from '@langchain/core/messages';
 import { v4 as uuidv4 } from 'uuid';
 import type { UserContext } from '../interfaces/user-context.interface';
-import type { AgentState } from '../state/agent.state';
 
 @Injectable()
 export class AiService {
@@ -12,42 +11,86 @@ export class AiService {
   constructor(private readonly langGraphService: LangGraphService) {}
 
   /**
-   * Synchronously process a prompt and return the final reasoned response
+   * Stream the chat response as clean SSE events:
+   *   { event: 'start',      data: { threadId } }
+   *   { event: 'token',      data: { content: string } }  (repeats per chunk)
+   *   { event: 'tool_start', data: { name: string } }
+   *   { event: 'tool_end',   data: { name: string } }
+   *   { event: 'done',       data: { threadId } }
+   *   { event: 'error',      data: { message: string } }
    */
-  async processSync(prompt: string, userContext: UserContext) {
-    this.logger.log(`Processing sync query for ${userContext.username}`);
+  async *processChatSse(
+    prompt: string,
+    threadId: string | undefined,
+    userContext: UserContext,
+  ): AsyncGenerator<{ event: string; data: Record<string, unknown> }> {
+    const resolvedThreadId = threadId ?? uuidv4();
 
-    // Compile workflow tailored for this user's roles
-    const workflow = this.langGraphService.createAgentWorkflow(
-      userContext.roles,
+    this.logger.log(
+      `[SSE] Chat for ${userContext.username} on thread ${resolvedThreadId}`,
     );
 
-    // A unique thread ID is required for MemorySaver to maintain session history
-    const threadId = uuidv4();
+    yield { event: 'start', data: { threadId: resolvedThreadId } };
 
-    const initialState = {
-      messages: [new HumanMessage(prompt)],
-      userContext: userContext,
-    };
+    try {
+      const workflow = this.langGraphService.createAgentWorkflow(
+        userContext.roles,
+      );
 
-    const config = { configurable: { thread_id: threadId } };
+      const initialState = {
+        messages: [new HumanMessage(prompt)],
+        userContext,
+      };
 
-    // Invoke the graph — cast needed because LangGraph's hand-crafted channels
-    // don't propagate state types through compile()
-    const finalState = (await workflow.invoke(
-      initialState as never,
-      config,
-    )) as unknown as AgentState;
+      const config = { configurable: { thread_id: resolvedThreadId } };
 
-    const lastMessage = finalState.messages[finalState.messages.length - 1];
-    return {
-      threadId,
-      response: lastMessage.content,
-    };
+      const stream = workflow.streamEvents(initialState as never, {
+        ...config,
+        version: 'v2',
+      });
+
+      for await (const event of stream) {
+        // Stream LLM tokens to the client
+        if (
+          event.event === 'on_chat_model_stream' &&
+          event.data?.chunk?.content
+        ) {
+          const content = event.data.chunk.content;
+          if (typeof content === 'string' && content.length > 0) {
+            yield { event: 'token', data: { content } };
+          }
+        }
+
+        // Notify when a tool is invoked
+        if (event.event === 'on_tool_start') {
+          yield {
+            event: 'tool_start',
+            data: { name: event.name },
+          };
+        }
+
+        // Notify when a tool finishes
+        if (event.event === 'on_tool_end') {
+          yield {
+            event: 'tool_end',
+            data: { name: event.name },
+          };
+        }
+      }
+
+      yield { event: 'done', data: { threadId: resolvedThreadId } };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `[SSE] Error on thread ${resolvedThreadId}: ${message}`,
+      );
+      yield { event: 'error', data: { message } };
+    }
   }
 
   /**
-   * Asynchronously stream the reasoning process and tokens back to the client
+   * @deprecated Use processChatSse instead.
+   * Kept for backward compat with /ai/stream endpoint.
    */
   processStream(prompt: string, threadId: string, userContext: UserContext) {
     this.logger.log(
@@ -64,7 +107,6 @@ export class AiService {
       userContext: userContext,
     };
 
-    // Use streamEvents for detailed SSE streaming of LangGraph's lifecycle
     return workflow.streamEvents(initialState as never, {
       ...config,
       version: 'v2',
