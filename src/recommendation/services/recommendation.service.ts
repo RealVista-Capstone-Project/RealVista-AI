@@ -103,15 +103,24 @@ export class RecommendationService implements OnModuleDestroy {
   async getRecommendations(
     userId: string,
     limit: number = 10,
+    listingType?: 'SALE' | 'RENT',
   ): Promise<RecommendationResponse> {
-    this.logger.log(`Generating recommendations for user ${userId}`);
+    this.logger.log(
+      `Generating recommendations for user ${userId} (listingType=${listingType ?? 'any'})`,
+    );
 
     // 1. Retrieve behavior history from Qdrant
     const behaviorHistory =
       await this.behaviorVectorService.getUserBehaviorHistory(userId, 100);
 
     if (behaviorHistory.length === 0) {
-      this.logger.warn(`No behavior history found for user ${userId}`);
+      this.logger.warn(
+        `No behavior history in Qdrant for user ${userId} (listingType=${listingType ?? 'any'})`,
+      );
+      // Vẫn có thể gợi ý theo loại tin từ PostgreSQL (cold start) — tránh tab Thuê/Mua trống khi Qdrant rỗng / ingest lỗi.
+      if (listingType) {
+        return this.coldStartFromPublished(userId, limit, listingType);
+      }
       return {
         userId,
         recommendations: [],
@@ -124,15 +133,21 @@ export class RecommendationService implements OnModuleDestroy {
     const interactedIds = Array.from(
       new Set(behaviorHistory.map((b) => b.listingId)),
     );
-    const { rows: interactedRows } = await this.pgPool.query(
-      `
+    const interactedParams: unknown[] = [interactedIds];
+    let interactedSql = `
       SELECT l.*, p.*, pt.name as property_type_name
       FROM listings l
       JOIN properties p ON l.property_id = p.property_id
       JOIN property_types pt ON p.property_type_id = pt.property_type_id
       WHERE l.listing_id = ANY($1::uuid[])
-    `,
-      [interactedIds],
+    `;
+    if (listingType) {
+      interactedParams.push(listingType);
+      interactedSql += ` AND l.listing_type = $${interactedParams.length}`;
+    }
+    const { rows: interactedRows } = await this.pgPool.query(
+      interactedSql,
+      interactedParams,
     );
 
     const interactedContext = this.buildInteractedContext(
@@ -154,6 +169,7 @@ export class RecommendationService implements OnModuleDestroy {
       interactedRows,
       collaborativeListings.map((c) => c.listingId),
       20,
+      listingType,
     );
 
     const candidateContext = candidates
@@ -217,11 +233,63 @@ ${candidateContext}
 
   // ─── Internals ─────────────────────────────────────────────────
 
+  /**
+   * Khi chưa có vector hành vi: trả tin PUBLISHED mới nhất đúng SALE|RENT để widget không bị 0 kết quả.
+   */
+  private async coldStartFromPublished(
+    userId: string,
+    limit: number,
+    listingType: 'SALE' | 'RENT',
+  ): Promise<RecommendationResponse> {
+    const sql = `
+      SELECT l.*, p.*, pt.name as property_type_name
+      FROM listings l
+      JOIN properties p ON l.property_id = p.property_id
+      JOIN property_types pt ON p.property_type_id = pt.property_type_id
+      WHERE l.status = 'PUBLISHED' AND l.listing_type = $1
+      ORDER BY l.published_at DESC NULLS LAST
+      LIMIT $2
+    `;
+    try {
+      const { rows } = await this.pgPool.query(sql, [listingType, limit]);
+      const recommendations: RecommendedListing[] = rows.map((row, idx) => ({
+        listingId: String(row.listing_id),
+        reason:
+          'Tin đăng mới — gợi ý khởi đầu khi chưa đủ lịch sử tương tác cá nhân.',
+        score: Math.max(0.55, 1 - idx * 0.07),
+        listingData: row as Record<string, unknown>,
+      }));
+      this.logger.log(
+        `Cold start ${listingType}: ${recommendations.length} listings for user ${userId}`,
+      );
+      return {
+        userId,
+        recommendations,
+        generatedAt: new Date().toISOString(),
+        behaviorSummary:
+          'Chưa có lịch sử hành vi trong vector DB; hiển thị tin mới nhất theo loại giao dịch.',
+      };
+    } catch (e) {
+      this.logger.error(
+        'coldStartFromPublished query failed',
+        e instanceof Error ? e.stack : String(e),
+      );
+      return {
+        userId,
+        recommendations: [],
+        generatedAt: new Date().toISOString(),
+        behaviorSummary: 'No behavior data available',
+      };
+    }
+  }
+
   private async getCandidateListings(
     interactedListings: any[],
     collaborativeIds: string[],
     limit: number,
+    listingType?: 'SALE' | 'RENT',
   ): Promise<any[]> {
+    const params: any[] = [];
     let query = `
       SELECT l.*, p.*, pt.name as property_type_name
       FROM listings l
@@ -229,7 +297,10 @@ ${candidateContext}
       JOIN property_types pt ON p.property_type_id = pt.property_type_id
       WHERE l.status = 'PUBLISHED'
     `;
-    const params: any[] = [];
+    if (listingType) {
+      params.push(listingType);
+      query += ` AND l.listing_type = $${params.length}`;
+    }
     const conditions: string[] = [];
 
     if (collaborativeIds.length > 0) {

@@ -62,6 +62,7 @@ export class RecommendationController {
     return this.recommendationService.getRecommendations(
       dto.userId,
       dto.limit ?? 10,
+      dto.listingType,
     );
   }
 }
