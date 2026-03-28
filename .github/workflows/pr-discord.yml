@@ -1,0 +1,61 @@
+name: PR to Discord
+
+permissions:
+  contents: read
+  pull-requests: read
+
+on:
+  pull_request:
+    types: [opened, review_requested]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send PR to Discord
+        run: |
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          AUTHOR="${{ github.event.pull_request.user.login }}"
+
+          # Lấy danh sách Reviewers
+          REVIEWERS=$(jq -r '.pull_request.requested_reviewers[].login' <<< '${{ toJson(github.event) }}')
+
+          # Nếu sự kiện là review_requested mà danh sách reviewers trống thì thoát
+          if [ -z "$REVIEWERS" ] && [ "${{ github.event.action }}" == "review_requested" ]; then
+            echo "No reviewers found. Skipping notification."
+            exit 0
+          fi
+
+          # mapping GitHub -> Discord ID
+          declare -A MAP
+          MAP["Hoang-Nguyen-Huy"]="<@620091987336626238>"
+          MAP["HuyDiCode"]="<@650208747141988365>"
+          MAP["nguyenhcp2004"]="<@761822942740086808>"
+          MAP["ThanhTriIsCoding"]="<@868924065874858004>"
+          MAP["toki-ai"]="<@897685284286791732>"
+
+          TAGS=""
+          for r in $REVIEWERS; do
+            # Không tag chính mình nếu mình là reviewer
+            if [ "$r" != "$AUTHOR" ]; then
+              TAGS="$TAGS ${MAP[$r]}"
+            fi
+          done
+
+          # Nếu sau khi lọc mà TAGS trống, và là review_requested thì cũng skip
+          if [ -z "$(echo $TAGS | xargs)" ] && [ "${{ github.event.action }}" == "review_requested" ]; then
+            echo "No other human reviewers to tag. Skipping."
+            exit 0
+          fi
+
+          # Clean up TAGS (remove leading space)
+          TAGS=$(echo $TAGS | xargs)
+          [ -z "$TAGS" ] && TAGS="None"
+
+          curl -X POST ${{ secrets.DISCORD_WEBHOOK_URL }} \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"content\": \"🚀 **New PR Notification**\n**TITLE:** $PR_TITLE\n**LINK:** $PR_URL\n👤 **Author:** $AUTHOR\n👀 **Reviewers:** $TAGS\"
+          }"
