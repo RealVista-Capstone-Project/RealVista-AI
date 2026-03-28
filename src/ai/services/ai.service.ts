@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { LangGraphService } from './lang-graph.service';
 import { HumanMessage } from '@langchain/core/messages';
-import { v4 as uuidv4 } from 'uuid';
+
 import type { UserContext } from '../interfaces/user-context.interface';
 
 @Injectable()
@@ -16,7 +16,7 @@ export class AiService {
    *   { event: 'token',      data: { content: string } }  (repeats per chunk)
    *   { event: 'tool_start', data: { name: string } }
    *   { event: 'tool_end',   data: { name: string } }
-   *   { event: 'done',       data: { threadId } }
+   *   { event: 'done',       data: {} }
    *   { event: 'error',      data: { message: string } }
    */
   async *processChatSse(
@@ -24,7 +24,10 @@ export class AiService {
     threadId: string | undefined,
     userContext: UserContext,
   ): AsyncGenerator<{ event: string; data: Record<string, unknown> }> {
-    const resolvedThreadId = threadId ?? uuidv4();
+    // Derive thread from user identity — same user always resumes
+    // the same conversation. threadId param kept as optional override
+    // for future multi-conversation support.
+    const resolvedThreadId = threadId ?? `user:${userContext.sub}`;
 
     this.logger.log(
       `[SSE] Chat for ${userContext.username} on thread ${resolvedThreadId}`,
@@ -78,7 +81,7 @@ export class AiService {
         }
       }
 
-      yield { event: 'done', data: { threadId: resolvedThreadId } };
+      yield { event: 'done', data: {} };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(

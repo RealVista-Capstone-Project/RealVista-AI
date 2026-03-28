@@ -125,10 +125,27 @@ export class RedisCheckpointerService
       if (!raw) return undefined;
 
       const stored = JSON.parse(raw) as {
-        checkpoint: Checkpoint;
+        serdeType?: string;
+        data?: string;
+        checkpoint?: Checkpoint; // legacy fallback (plain JSON)
         metadata: CheckpointMetadata;
         parentId?: string;
       };
+
+      // Deserialize checkpoint — supports both serde-encoded and legacy plain JSON
+      let checkpoint: Checkpoint;
+      if (stored.serdeType && stored.data) {
+        const bytes = Uint8Array.from(Buffer.from(stored.data, 'base64'));
+        checkpoint = (await this.serde.loadsTyped(
+          stored.serdeType,
+          bytes,
+        )) as Checkpoint;
+      } else if (stored.checkpoint) {
+        // Legacy: stored as plain JSON before serde migration
+        checkpoint = stored.checkpoint;
+      } else {
+        return undefined;
+      }
 
       // Load pending writes for this checkpoint (stored as CheckpointPendingWrite = [taskId, channel, value])
       const writesRaw = await this.redis.get(
@@ -158,7 +175,7 @@ export class RedisCheckpointerService
 
       return {
         config: resultConfig,
-        checkpoint: stored.checkpoint,
+        checkpoint,
         metadata: stored.metadata,
         parentConfig,
         pendingWrites,
@@ -238,7 +255,18 @@ export class RedisCheckpointerService
       const cpKey = this.checkpointKey(threadId, ns, checkpoint.id);
       const indexKey = this.checkpointIndexKey(threadId, ns);
       const score = Date.now();
-      const payload = JSON.stringify({ checkpoint, metadata, parentId });
+
+      // Use LangGraph's serde so BaseMessage subclasses survive round-trip
+      const [serdeType, serializedBytes] =
+        await this.serde.dumpsTyped(checkpoint);
+      const serializedB64 = Buffer.from(serializedBytes).toString('base64');
+
+      const payload = JSON.stringify({
+        serdeType,
+        data: serializedB64,
+        metadata,
+        parentId,
+      });
 
       const pipeline = this.redis.pipeline();
       pipeline.set(cpKey, payload, 'EX', THREAD_TTL_SECONDS);

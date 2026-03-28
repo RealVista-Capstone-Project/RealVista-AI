@@ -93,7 +93,7 @@ export class BackendApiService {
       this.configService.getOrThrow<string>('SERVICE_API_KEY');
     this.frontendUrl = this.configService.get<string>(
       'FRONTEND_URL',
-      'http://localhost:3000',
+      'http://localhost:3000/vi',
     );
   }
 
@@ -205,7 +205,7 @@ export class BackendApiService {
       area: l.area,
       fullAddress: l.full_address,
       thumbnail: l.thumbnail ?? '',
-      url: `${this.frontendUrl}/listings/${l.slug}`,
+      url: `${this.frontendUrl}/listing/${l.slug}`,
       attributes: attributeSummary,
       publishedAt: l.publishedAt,
     };

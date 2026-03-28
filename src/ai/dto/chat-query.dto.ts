@@ -12,7 +12,8 @@ export class ChatQueryDto {
   prompt: string;
 
   @ApiPropertyOptional({
-    description: 'Existing Thread ID for conversational memory.',
+    description:
+      'Optional: override the auto-assigned thread. Omit to use your persistent user thread (7-day TTL).',
   })
   @IsString()
   @IsOptional()

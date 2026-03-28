@@ -27,7 +27,7 @@ export class AiController {
    *   event: token      → data: { "content": "..." }   (multiple)
    *   event: tool_start → data: { "name": "..." }
    *   event: tool_end   → data: { "name": "..." }
-   *   event: done       → data: { "threadId": "..." }
+   *   event: done       → data: {}
    *   event: error      → data: { "message": "..." }
    *
    * Pass `threadId` in the request body to continue an existing conversation.
