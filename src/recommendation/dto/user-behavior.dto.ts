@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsOptional,
   IsEnum,
+  IsIn,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -93,4 +94,13 @@ export class GetRecommendationsDto {
   @IsNumber()
   @IsOptional()
   limit?: number;
+
+  @ApiPropertyOptional({
+    description: 'Only return candidates for this transaction type (sale vs rent)',
+    enum: ['SALE', 'RENT'],
+    example: 'SALE',
+  })
+  @IsOptional()
+  @IsIn(['SALE', 'RENT'])
+  listingType?: 'SALE' | 'RENT';
 }
