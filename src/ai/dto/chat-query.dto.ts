@@ -1,5 +1,5 @@
-import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsNotEmpty } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 
 export class ChatQueryDto {
   @ApiProperty({
@@ -11,11 +11,13 @@ export class ChatQueryDto {
   @IsNotEmpty()
   prompt: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     description:
-      'Optional: override the auto-assigned thread. Omit to use your persistent user thread (7-day TTL).',
+      'Thread ID for conversation context. Typically the conversation UUID ' +
+      'managed by the backend. Required for multi-turn conversations.',
+    example: '550e8400-e29b-41d4-a716-446655440000',
   })
   @IsString()
-  @IsOptional()
-  threadId?: string;
+  @IsNotEmpty()
+  threadId: string;
 }

@@ -16,24 +16,26 @@ export class AiService {
    *   { event: 'token',      data: { content: string } }  (repeats per chunk)
    *   { event: 'tool_start', data: { name: string } }
    *   { event: 'tool_end',   data: { name: string } }
-   *   { event: 'done',       data: {} }
+   *   { event: 'done',       data: { fullResponse: string } }
    *   { event: 'error',      data: { message: string } }
+   *
+   * The `done` event includes the complete accumulated assistant response
+   * so the caller (Spring Boot proxy) can persist it without buffering tokens.
+   *
+   * @param prompt      User message text
+   * @param threadId    Required — conversation thread ID (typically the conversation UUID from Spring Boot)
+   * @param userContext Authenticated user context forwarded by the API gateway
    */
   async *processChatSse(
     prompt: string,
-    threadId: string | undefined,
+    threadId: string,
     userContext: UserContext,
   ): AsyncGenerator<{ event: string; data: Record<string, unknown> }> {
-    // Derive thread from user identity — same user always resumes
-    // the same conversation. threadId param kept as optional override
-    // for future multi-conversation support.
-    const resolvedThreadId = threadId ?? `user:${userContext.sub}`;
-
     this.logger.log(
-      `[SSE] Chat for ${userContext.username} on thread ${resolvedThreadId}`,
+      `[SSE] Chat for ${userContext.username} on thread ${threadId}`,
     );
 
-    yield { event: 'start', data: { threadId: resolvedThreadId } };
+    yield { event: 'start', data: { threadId } };
 
     try {
       const workflow = this.langGraphService.createAgentWorkflow(
@@ -45,12 +47,15 @@ export class AiService {
         userContext,
       };
 
-      const config = { configurable: { thread_id: resolvedThreadId } };
+      const config = { configurable: { thread_id: threadId } };
 
       const stream = workflow.streamEvents(initialState as never, {
         ...config,
         version: 'v2',
       });
+
+      // Accumulate the full assistant response for the `done` event
+      const responseChunks: string[] = [];
 
       for await (const event of stream) {
         // Stream LLM tokens to the client
@@ -60,6 +65,7 @@ export class AiService {
         ) {
           const content = event.data.chunk.content;
           if (typeof content === 'string' && content.length > 0) {
+            responseChunks.push(content);
             yield { event: 'token', data: { content } };
           }
         }
@@ -81,38 +87,14 @@ export class AiService {
         }
       }
 
-      yield { event: 'done', data: {} };
+      yield {
+        event: 'done',
+        data: { fullResponse: responseChunks.join('') },
+      };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(
-        `[SSE] Error on thread ${resolvedThreadId}: ${message}`,
-      );
+      this.logger.error(`[SSE] Error on thread ${threadId}: ${message}`);
       yield { event: 'error', data: { message } };
     }
-  }
-
-  /**
-   * @deprecated Use processChatSse instead.
-   * Kept for backward compat with /ai/stream endpoint.
-   */
-  processStream(prompt: string, threadId: string, userContext: UserContext) {
-    this.logger.log(
-      `Processing SSE Stream query for ${userContext.username} on thread ${threadId}`,
-    );
-
-    const workflow = this.langGraphService.createAgentWorkflow(
-      userContext.roles,
-    );
-    const config = { configurable: { thread_id: threadId } };
-
-    const initialState = {
-      messages: [new HumanMessage(prompt)],
-      userContext: userContext,
-    };
-
-    return workflow.streamEvents(initialState as never, {
-      ...config,
-      version: 'v2',
-    });
   }
 }

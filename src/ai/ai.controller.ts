@@ -1,6 +1,17 @@
-import { Controller, Post, Body, Res, Header, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Delete,
+  Body,
+  Param,
+  Res,
+  Header,
+  UseGuards,
+  HttpCode,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { AiService } from './services/ai.service';
+import { RedisCheckpointerService } from './services/redis-checkpointer.service';
 import { ChatQueryDto } from './dto/chat-query.dto';
 import { User } from '../decorators/user/user.decorator';
 import type { UserContext } from './interfaces/user-context.interface';
@@ -9,6 +20,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiSecurity,
+  ApiParam,
 } from '@nestjs/swagger';
 import { ApiKeyGuard } from '../auth/guards/api-key/api-key.guard';
 
@@ -17,22 +29,23 @@ import { ApiKeyGuard } from '../auth/guards/api-key/api-key.guard';
 @UseGuards(ApiKeyGuard)
 @Controller('ai')
 export class AiController {
-  constructor(private readonly aiService: AiService) {}
+  constructor(
+    private readonly aiService: AiService,
+    private readonly redisCheckpointer: RedisCheckpointerService,
+  ) {}
 
   /**
-   * Chat endpoint — responds as an SSE stream.
+   * Chat endpoint -- responds as an SSE stream.
    *
    * Event format:
-   *   event: start      → data: { "threadId": "..." }
-   *   event: token      → data: { "content": "..." }   (multiple)
-   *   event: tool_start → data: { "name": "..." }
-   *   event: tool_end   → data: { "name": "..." }
-   *   event: done       → data: {}
-   *   event: error      → data: { "message": "..." }
+   *   event: start      -> data: { "threadId": "..." }
+   *   event: token      -> data: { "content": "..." }   (multiple)
+   *   event: tool_start -> data: { "name": "..." }
+   *   event: tool_end   -> data: { "name": "..." }
+   *   event: done       -> data: { "fullResponse": "..." }
+   *   event: error      -> data: { "message": "..." }
    *
-   * Pass `threadId` in the request body to continue an existing conversation.
-   * Omit it (or set to null) to start a new thread — the server will assign one
-   * and return it in the `start` event.
+   * `threadId` is required -- typically the conversation UUID from Spring Boot.
    */
   @Post('chat')
   @Header('Content-Type', 'text/event-stream')
@@ -42,12 +55,13 @@ export class AiController {
     summary: 'Chat with the AI agent (SSE token stream)',
     description:
       'Opens a Server-Sent Events stream. Each SSE event has a named `event:` field. ' +
-      'Reconnect using the `threadId` from the `start` event to continue the conversation.',
+      'The `done` event includes the full accumulated assistant response. ' +
+      'Pass a `threadId` to maintain conversation context across calls.',
   })
   @ApiResponse({
     status: 200,
     description:
-      'SSE stream: start → token(s) → [tool_start/tool_end] → done | error',
+      'SSE stream: start -> token(s) -> [tool_start/tool_end] -> done (with fullResponse) | error',
   })
   async chat(
     @Body() chatQueryDto: ChatQueryDto,
@@ -65,5 +79,23 @@ export class AiController {
     }
 
     res.end();
+  }
+
+  /**
+   * Delete all Redis state for a given LangGraph thread.
+   * Called by Spring Boot when a conversation is deleted from PostgreSQL.
+   */
+  @Delete('threads/:threadId')
+  @HttpCode(204)
+  @ApiOperation({
+    summary: 'Delete thread state from Redis',
+    description:
+      'Removes all LangGraph checkpoint data for the given threadId. ' +
+      'Call this when a conversation is permanently deleted.',
+  })
+  @ApiParam({ name: 'threadId', description: 'Thread ID to purge' })
+  @ApiResponse({ status: 204, description: 'Thread state deleted' })
+  async deleteThread(@Param('threadId') threadId: string) {
+    await this.redisCheckpointer.deleteThread(threadId);
   }
 }
