@@ -78,11 +78,27 @@ export class ToolsService {
           minPrice: z
             .number()
             .optional()
-            .describe('Minimum price in VND (e.g. 1000000000 for 1 tỷ).'),
+            .describe(
+              'Minimum price in VND. ' +
+                'Set this for: "trên/từ X trở lên" (above X) → minPrice = X; ' +
+                '"từ X đến Y" (range from X to Y) → minPrice = X; ' +
+                '"khoảng/tầm/xấp xỉ X" (around X) → minPrice = X * 0.8 (±20% lower bound); ' +
+                '"đúng/chính xác X" (exactly X) → minPrice = X. ' +
+                'Omit for "dưới/không quá X" (under X). ' +
+                'Example: 1000000000 = 1 tỷ, 2500000000 = 2.5 tỷ.',
+            ),
           maxPrice: z
             .number()
             .optional()
-            .describe('Maximum price in VND (e.g. 3000000000 for 3 tỷ).'),
+            .describe(
+              'Maximum price in VND. ' +
+                'Set this for: "dưới/không quá X" (under X) → maxPrice = X; ' +
+                '"từ X đến Y" (range from X to Y) → maxPrice = Y; ' +
+                '"khoảng/tầm/xấp xỉ X" (around X) → maxPrice = X * 1.2 (±20% upper bound); ' +
+                '"đúng/chính xác X" (exactly X) → maxPrice = X. ' +
+                'Omit for "trên/từ X trở lên" (above X). ' +
+                'Example: 3000000000 = 3 tỷ, 5000000000 = 5 tỷ.',
+            ),
           listingType: z
             .enum(['SALE', 'RENT'])
             .optional()
