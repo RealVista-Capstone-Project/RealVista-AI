@@ -5,6 +5,7 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { AiModule } from './ai/ai.module';
 import { RecommendationModule } from './recommendation/recommendation.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { RecommendationModule } from './recommendation/recommendation.module';
     AuthModule,
     AiModule,
     RecommendationModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

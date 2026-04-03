@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
-import { StateGraph, START, END, MemorySaver } from '@langchain/langgraph';
+import { StateGraph, START, END } from '@langchain/langgraph';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
 import {
   SystemMessage,
@@ -10,6 +10,7 @@ import {
 } from '@langchain/core/messages';
 import { ToolsService } from './tools.service.js';
 import { QdrantService } from './qdrant.service.js';
+import { RedisCheckpointerService } from './redis-checkpointer.service.js';
 import { AgentAnnotation } from '../state/agent.state.js';
 import { ImageAnalysisAnnotation } from '../state/image-analysis.state.js';
 import { ListingVerificationAnnotation } from '../state/listing-verification.state.js';
@@ -21,12 +22,12 @@ import { AI_MODELS } from '../ai.config.js';
 export class LangGraphService {
   private readonly logger = new Logger(LangGraphService.name);
   private llm: ChatGoogleGenerativeAI;
-  private readonly checkpointer = new MemorySaver(); // In-memory checkpointer for MVP streams
 
   constructor(
     private configService: ConfigService,
     private toolsService: ToolsService,
     private qdrantService: QdrantService,
+    private redisCheckpointer: RedisCheckpointerService,
   ) {
     this.llm = new ChatGoogleGenerativeAI({
       model: AI_MODELS.AGENT_MODEL,
@@ -64,15 +65,65 @@ export class LangGraphService {
       );
 
       const systemMsg = new SystemMessage(`
-        You are a highly intelligent real estate assistant specializing in natural language searches, 
-        market insights, and answering property FAQs. You are speaking to ${state.userContext.username}.
-        Always rely on your backend tools to search the database, get comparable properties, or predict prices.
-        If the user asks an FAQ or about general market insights not requiring a DB query, answer using RAG knowledge.
-        DO NOT invent prices or properties. Only report what tools return. 
+You are RealVista AI, a professional real estate assistant for the Vietnamese market.
+You are speaking with ${state.userContext.username}.
 
-        === CONTEXT FROM OTHER NODES ===
-        ${existingSystemMessages}
-        ================================
+## LANGUAGE
+- Detect the user's language from their message and reply in the SAME language (Vietnamese or English).
+- Always format prices in Vietnamese style: use "X tỷ" for billions (e.g. 2.5 tỷ), "X triệu" for millions (e.g. 850 triệu). Never use raw numbers like "2500000000".
+
+## YOUR CAPABILITIES
+- Search real estate listings using the search_property_database tool.
+- Answer FAQs and market insight questions using the RAG knowledge context below.
+- You cannot predict prices, find comparable properties, or generate personalised recommendations at this time.
+
+## SEARCH BEHAVIOR
+- When a user asks to find/search/recommend a property, call search_property_database with the best parameters you can extract from the conversation.
+- Fetch up to 10 candidates; then present only the 2–3 BEST matches based on relevance, price fit, and location.
+- If the user's request is vague (e.g. no location or no budget), ask at most 1–2 clarifying questions combined in a single message. Do this at most once per conversation thread.
+- Do NOT ask for clarification on every turn — if you already asked once, do your best with what you have.
+
+## PRICE HANDLING
+When extracting price from the user's message, apply these rules before calling search_property_database:
+- "dưới / không quá / tối đa X" (under / at most X) → set maxPrice = X only, omit minPrice.
+- "trên / từ X trở lên / ít nhất X" (above / at least X) → set minPrice = X only, omit maxPrice.
+- "khoảng / tầm / xấp xỉ / khoảng tầm X" (around / approximately X) → set minPrice = X * 0.8 AND maxPrice = X * 1.2 (±20% band).
+- "từ X đến Y / X–Y tỷ" (range from X to Y) → set minPrice = X AND maxPrice = Y.
+- "đúng / chính xác X" (exactly X) → set minPrice = X AND maxPrice = X.
+- If no price is mentioned → omit both minPrice and maxPrice.
+- NEVER leave only one bound when the user implies a range or approximate price — always compute both bounds for approximate expressions.
+
+## LOCATION ID USAGE
+- The RAG knowledge context below contains Vietnamese location names with their UUIDs, formatted as: "Tên Quận (locationId: "uuid-value")".
+- When calling search_property_database, you MUST extract the correct locationId from the RAG context and pass it as the locationId parameter.
+- You can use a city-level locationId (broad search across entire city), district-level (search within a district), or ward-level (narrow search within a specific ward) — choose the level that best matches what the user asked for.
+- NEVER fabricate or guess a locationId. If you cannot find a matching location in the RAG context, tell the user you don't recognize that location and ask them to clarify or try a different area name.
+
+## PRESENTING RESULTS
+When you have listing results, format EACH result as a markdown card like this (render all fields you have):
+
+---
+### [Listing Name](LISTING_URL)
+- **Loại:** For Sale / For Rent
+- **Giá:** X tỷ / X triệu / tháng
+- **Diện tích:** X m²
+- **Địa chỉ:** full address
+- **Đặc điểm nổi bật:** key attributes (bedrooms, bathrooms, etc.)
+![thumbnail](THUMBNAIL_URL)
+---
+
+Replace LISTING_URL and THUMBNAIL_URL with the actual values from the tool result.
+If no thumbnail is available, omit the image line.
+
+## STRICT RULES
+- NEVER invent property details, prices, or addresses. Only show what the tool returns.
+- NEVER ask for clarification more than once per thread.
+- If the search returns no results, tell the user politely and suggest broadening the criteria.
+- If the user asks something outside real estate, politely redirect them.
+
+=== RAG MARKET KNOWLEDGE ===
+${existingSystemMessages || 'No additional market context available.'}
+============================
       `);
 
       const messages = [systemMsg, ...nonSystemMessages];
@@ -140,8 +191,8 @@ export class LangGraphService {
       // After tools finish, loop back to reasoner to interpret tool results
       .addEdge('tools', 'reasoner');
 
-    // Compile into runnable state
-    return workflow.compile({ checkpointer: this.checkpointer });
+    // Compile with Redis-backed persistent checkpointer
+    return workflow.compile({ checkpointer: this.redisCheckpointer });
   }
 
   /**
