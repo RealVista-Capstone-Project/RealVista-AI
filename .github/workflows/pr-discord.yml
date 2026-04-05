@@ -1,4 +1,4 @@
-name: PR to Discord
+name: PR CI & Discord Notification
 
 permissions:
   contents: read
@@ -6,12 +6,33 @@ permissions:
 
 on:
   pull_request:
-    types: [opened, review_requested]
+    types: [opened, synchronize, reopened, review_requested]
 
 jobs:
-  notify:
+  build:
+    name: Build & Compile
+    if: github.event.action != 'review_requested'
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+  notify:
+    name: Discord Notification
+    if: github.event.action == 'opened' || github.event.action == 'review_requested'
+    runs-on: ubuntu-latest
     steps:
       - name: Send PR to Discord
         run: |
