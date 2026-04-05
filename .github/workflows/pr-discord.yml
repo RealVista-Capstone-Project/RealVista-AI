@@ -118,7 +118,8 @@ jobs:
         id: vars
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          BRANCH="${{ github.ref_name }}"
+          # Sanitize branch name: replace slashes with dashes and convert to lowercase
+          BRANCH=$(echo "${{ github.ref_name }}" | sed 's/\//-/g' | tr '[:upper:]' '[:lower:]')
 
           if [ "${BRANCH}" == "main" ]; then
             echo "environment=production" >> $GITHUB_OUTPUT
