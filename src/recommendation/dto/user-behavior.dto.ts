@@ -96,7 +96,8 @@ export class GetRecommendationsDto {
   limit?: number;
 
   @ApiPropertyOptional({
-    description: 'Only return candidates for this transaction type (sale vs rent)',
+    description:
+      'Only return candidates for this transaction type (sale vs rent)',
     enum: ['SALE', 'RENT'],
     example: 'SALE',
   })
