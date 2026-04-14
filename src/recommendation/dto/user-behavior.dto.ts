@@ -104,4 +104,20 @@ export class GetRecommendationsDto {
   @IsOptional()
   @IsIn(['SALE', 'RENT'])
   listingType?: 'SALE' | 'RENT';
+
+  @ApiPropertyOptional({
+    description: 'User saved searches for AI recommendation',
+    type: 'array',
+  })
+  @IsOptional()
+  @IsArray()
+  preferences?: any[];
+
+  @ApiPropertyOptional({
+    description: 'The name of the active profile for semantic hints',
+    example: 'Studio',
+  })
+  @IsOptional()
+  @IsString()
+  profileName?: string;
 }
