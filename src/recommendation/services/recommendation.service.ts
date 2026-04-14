@@ -457,11 +457,13 @@ ${candidateContext}
   }
 
   private buildInteractedContext(
-    history: Array<{ event_type: string; engagement_score: number }>,
+    history: Array<{ listingId: string; eventType: string; durationSeconds: number | null }>,
     rows: ListingCandidate[],
   ): string {
-    const rowMap = new Map();
-    for (const r of rows) rowMap.set(String(r.listing_id), r);
+    const rowMap = new Map<string, ListingCandidate>();
+    for (const r of rows) {
+      rowMap.set(String(r.listing_id), r);
+    }
 
     const listingWeights = new Map<string, number>();
     for (const h of history) {
@@ -480,10 +482,12 @@ ${candidateContext}
     return sortedIds
       .map((id) => {
         const row = rowMap.get(id);
-        if (!row) return '';
+        if (!row) {
+          return '';
+        }
         return `[Engagement: ${listingWeights.get(id)}] ${this.formatListingForLLM(row)}`;
       })
-      .filter((s) => s)
+      .filter((s) => s !== '')
       .join('\n');
   }
 
