@@ -457,7 +457,11 @@ ${candidateContext}
   }
 
   private buildInteractedContext(
-    history: Array<{ listingId: string; eventType: string; durationSeconds: number | null }>,
+    history: Array<{
+      listingId: string;
+      eventType: string;
+      durationSeconds: number | null;
+    }>,
     rows: ListingCandidate[],
   ): string {
     const rowMap = new Map<string, ListingCandidate>();
