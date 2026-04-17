@@ -17,6 +17,8 @@ export class ToolsService {
   getAvailableTools(userRoles: string[]): StructuredToolInterface[] {
     const defaultTools: StructuredToolInterface[] = [
       this.searchPropertyDatabase(),
+      this.getPriceHistory(),
+      this.getSimilarListings(),
     ];
 
     // Premium tools (e.g. deep market analysis) can be unlocked here
@@ -111,6 +113,70 @@ export class ToolsService {
             .describe(
               'Type of property, e.g. "Apartment" (căn hộ), "Villa" (biệt thự), "Land" (đất nền), "House" (nhà phố).',
             ),
+        }),
+      },
+    );
+  }
+
+  /**
+   * Fetch price history for a specific listing.
+   */
+  private getPriceHistory() {
+    return tool(
+      async ({ listingId }) => {
+        this.logger.log(`[Tool] get_price_history — listingId="${listingId}"`);
+        const history = await this.backendApiService.getPriceHistory(listingId);
+
+        if (!history || !history.history.length) {
+          return 'No price history available for this listing.';
+        }
+
+        return JSON.stringify(history);
+      },
+      {
+        name: 'get_price_history',
+        description:
+          'Retrieves the price history for a specific property listing. ' +
+          'Call this when the user asks about price changes, market trends for a specific property, or why a price changed.',
+        schema: z.object({
+          listingId: z.string().describe('The UUID of the listing to check'),
+        }),
+      },
+    );
+  }
+
+  /**
+   * Fetch similar listings for a specific listing.
+   */
+  private getSimilarListings() {
+    return tool(
+      async ({ listingId, limit }) => {
+        this.logger.log(
+          `[Tool] get_similar_listings — listingId="${listingId}", limit=${limit}`,
+        );
+        const similar = await this.backendApiService.getSimilarListings(
+          listingId,
+          limit,
+        );
+
+        if (!similar.length) {
+          return 'No similar listings found.';
+        }
+
+        return JSON.stringify({ found: similar.length, listings: similar });
+      },
+      {
+        name: 'get_similar_listings',
+        description:
+          'Retrieves listings similar to a given property. ' +
+          'Call this when the user says "find me properties like this one" or "I like this house, show me more like it".',
+        schema: z.object({
+          listingId: z.string().describe('The UUID of the base listing'),
+          limit: z
+            .number()
+            .optional()
+            .default(5)
+            .describe('Max results to return'),
         }),
       },
     );

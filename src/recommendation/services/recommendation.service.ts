@@ -10,6 +10,26 @@ import type {
 } from '../dto/recommendation-response.dto';
 import type { BehaviorEventDto } from '../dto/user-behavior.dto';
 
+interface SavedSearchCriteria {
+  propertyType?: string;
+  property_type?: string;
+  propertyCategory?: string;
+  property_category?: string;
+  price?: [number | null, number | null];
+}
+
+interface SavedSearch {
+  criteria?: SavedSearchCriteria;
+}
+
+interface ListingCandidate {
+  listing_id: string;
+  property_id: string;
+  property_type_id: string;
+  price: number;
+  [key: string]: any;
+}
+
 /**
  * Core recommendation logic:
  *
@@ -104,9 +124,11 @@ export class RecommendationService implements OnModuleDestroy {
     userId: string,
     limit: number = 10,
     listingType?: 'SALE' | 'RENT',
+    preferences?: SavedSearch[],
+    profileName?: string,
   ): Promise<RecommendationResponse> {
     this.logger.log(
-      `Generating recommendations for user ${userId} (listingType=${listingType ?? 'any'})`,
+      `Generating recommendations for user ${userId} (listingType=${listingType ?? 'any'}, preferencesCount=${preferences?.length ?? 0})`,
     );
 
     // 1. Retrieve behavior history from Qdrant
@@ -117,16 +139,19 @@ export class RecommendationService implements OnModuleDestroy {
       this.logger.warn(
         `No behavior history in Qdrant for user ${userId} (listingType=${listingType ?? 'any'})`,
       );
-      // Vẫn có thể gợi ý theo loại tin từ PostgreSQL (cold start) — tránh tab Thuê/Mua trống khi Qdrant rỗng / ingest lỗi.
-      if (listingType) {
-        return this.coldStartFromPublished(userId, limit, listingType);
+
+      // If we have preferences even without behavior, we can still rank candidates
+      if (!preferences || preferences.length === 0) {
+        if (listingType) {
+          return this.coldStartFromPublished(userId, limit, listingType);
+        }
+        return {
+          userId,
+          recommendations: [],
+          generatedAt: new Date().toISOString(),
+          behaviorSummary: 'No behavior data available',
+        };
       }
-      return {
-        userId,
-        recommendations: [],
-        generatedAt: new Date().toISOString(),
-        behaviorSummary: 'No behavior data available',
-      };
     }
 
     // 2. Fetch interacted listings full details from PostgreSQL
@@ -155,22 +180,33 @@ export class RecommendationService implements OnModuleDestroy {
       interactedRows,
     );
     const behaviorSummary = this.buildBehaviorSummary(behaviorHistory);
+    const preferenceSummary = this.buildPreferenceSummary(preferences);
+    const fullProfileSummary = `${behaviorSummary}\n\n${preferenceSummary}`;
 
     // 3. Find similar users behavior (Collaborative signal)
     const collaborativeListings =
       await this.behaviorVectorService.findSimilarBehaviorListings(
-        behaviorSummary,
+        fullProfileSummary,
         userId,
         10,
       );
 
     // 4. Smart Candidate Fetch (Max 20 Candidates to prioritize performance & AI context window)
-    const candidates = await this.getCandidateListings(
+    let candidates = await this.getCandidateListings(
       interactedRows,
       collaborativeListings.map((c) => c.listingId),
       20,
       listingType,
+      preferences,
     );
+
+    // Fallback: Nếu lọc theo hành vi và sở thích không ra kết quả (do bộ lọc quá hẹp), lấy ngẫu nhiên tin mới nhất
+    if (candidates.length === 0) {
+      this.logger.warn(
+        `No preference/behavior candidates for user ${userId}. Falling back to random.`,
+      );
+      candidates = await this.getCandidateListings([], [], 20, listingType, []);
+    }
 
     const candidateContext = candidates
       .map((c) => this.formatListingForLLM(c))
@@ -182,14 +218,18 @@ export class RecommendationService implements OnModuleDestroy {
 Here are the listings the user has interacted with most (along with their engagement score):
 ${interactedContext}
 
-Evaluate what the user is looking for based on the TYPE, PRICE, AMENITIES, and FEATURES of their interacted listings.
+=== USER PREFERENCES (SAVED SEARCHES) ===
+${preferenceSummary}
+
+Evaluate what the user is looking for based on their BEHAVIOR and explicit PREFERENCES (TYPE, PRICE, AMENITIES, and FEATURES).
 
 Below are candidate listings fetched from our database:
 ${candidateContext}
 
 === INSTRUCTIONS ===
 1. Analyze the user's preferences from their highly engaged listings above.
-2. Select and rank the TOP ${limit} most relevant candidate listings for this user.
+2. Consider the profile name "${profileName || 'General'}" as a semantic hint for their current interest (e.g., "Studio" suggests small, modern apartments).
+3. Select and rank the TOP ${limit} most relevant candidate listings for this user.
 3. For each recommendation, provide a brief human-readable reason (1-2 sentences) why it matches their preferences (e.g. price, amenities).
 4. Return EXACTLY a JSON array (no markdown, no code fences) with this structure:
 [
@@ -227,7 +267,7 @@ ${candidateContext}
       userId,
       recommendations: enrichedRecommendations,
       generatedAt: new Date().toISOString(),
-      behaviorSummary,
+      behaviorSummary: fullProfileSummary,
     };
   }
 
@@ -247,7 +287,7 @@ ${candidateContext}
       JOIN properties p ON l.property_id = p.property_id
       JOIN property_types pt ON p.property_type_id = pt.property_type_id
       WHERE l.status = 'PUBLISHED' AND l.listing_type = $1
-      ORDER BY l.published_at DESC NULLS LAST
+      ORDER BY RANDOM()
       LIMIT $2
     `;
     try {
@@ -284,63 +324,128 @@ ${candidateContext}
   }
 
   private async getCandidateListings(
-    interactedListings: any[],
+    interactedListings: ListingCandidate[],
     collaborativeIds: string[],
     limit: number,
     listingType?: 'SALE' | 'RENT',
-  ): Promise<any[]> {
-    const params: any[] = [];
+    preferences?: SavedSearch[],
+  ): Promise<ListingCandidate[]> {
+    const params: unknown[] = [];
     let query = `
-      SELECT l.*, p.*, pt.name as property_type_name
+      SELECT l.*, p.*, pt.name as property_type_name, pc.name as property_category_name
       FROM listings l
       JOIN properties p ON l.property_id = p.property_id
-      JOIN property_types pt ON p.property_type_id = pt.property_type_id
+      LEFT JOIN property_types pt ON p.property_type_id = pt.property_type_id
+      LEFT JOIN property_categories pc ON pt.property_category_id = pc.property_category_id
       WHERE l.status = 'PUBLISHED'
     `;
     if (listingType) {
       params.push(listingType);
       query += ` AND l.listing_type = $${params.length}`;
     }
-    const conditions: string[] = [];
 
+    const finalConditions: string[] = [];
+
+    // 1. Nếu có Preferences từ Profile, ưu tiên lọc theo Profile trước
+    if (preferences && preferences.length > 0) {
+      const prefConditions: string[] = [];
+      for (const pref of preferences) {
+        const criteria = pref.criteria || {};
+        const subParts: string[] = [];
+
+        const pType = criteria.propertyType || criteria.property_type;
+        if (pType && typeof pType === 'string') {
+          params.push(`%${pType}%`);
+          subParts.push(
+            `(pt.name ILIKE $${params.length} OR pt.code ILIKE $${params.length} OR pc.name ILIKE $${params.length} OR pc.code ILIKE $${params.length})`,
+          );
+        }
+
+        const pCat = criteria.propertyCategory || criteria.property_category;
+        if (pCat && typeof pCat === 'string') {
+          params.push(`%${pCat}%`);
+          subParts.push(
+            `(pc.name ILIKE $${params.length} OR pc.code ILIKE $${params.length} OR pt.name ILIKE $${params.length} OR pt.code ILIKE $${params.length})`,
+          );
+        }
+
+        const price = criteria.price;
+        if (Array.isArray(price)) {
+          if (price[0] != null) {
+            params.push(Number(price[0]));
+            subParts.push(`l.price >= $${params.length}`);
+          }
+          if (price[1] != null) {
+            params.push(Number(price[1]));
+            subParts.push(`l.price <= $${params.length}`);
+          }
+        }
+
+        if (subParts.length > 0) {
+          prefConditions.push(`(${subParts.join(' AND ')})`);
+        }
+      }
+
+      if (prefConditions.length > 0) {
+        finalConditions.push(`(${prefConditions.join(' OR ')})`);
+      }
+    }
+
+    // 2. Logic for behavior-based collection (đã nới lỏng để tránh bị 'kẹt')
+    if (finalConditions.length === 0 && interactedListings.length > 0) {
+      const prices = interactedListings.map((r) => Number(r.price));
+      const minPrice = Math.min(...prices) * 0.5; // Nới rộng biên độ giá
+      const maxPrice = Math.max(...prices) * 1.5;
+
+      params.push(minPrice, maxPrice);
+      const p1 = params.length - 1;
+      const p2 = params.length;
+
+      // KHÔNG lọc cứng theo property_type_id nữa để tránh 'bong bóng'
+      finalConditions.push(`(l.price BETWEEN $${p1} AND $${p2})`);
+    }
+
+    // 3. Collaborative filtering
     if (collaborativeIds.length > 0) {
       params.push(collaborativeIds);
-      conditions.push(`l.listing_id = ANY($${params.length}::uuid[])`);
+      if (finalConditions.length > 0) {
+        const lastCondition = finalConditions.pop();
+        finalConditions.push(
+          `(${lastCondition} OR l.listing_id = ANY($${params.length}::uuid[]))`,
+        );
+      } else {
+        finalConditions.push(`l.listing_id = ANY($${params.length}::uuid[])`);
+      }
     }
 
-    if (interactedListings.length > 0) {
-      const prices = interactedListings.map((r) => Number(r.price));
-      const minPrice = Math.min(...prices) * 0.7; // ±30% range
-      const maxPrice = Math.max(...prices) * 1.3;
-      const types = Array.from(
-        new Set(interactedListings.map((r) => String(r.property_type_id))),
-      );
-      const listingTypes = Array.from(
-        new Set(interactedListings.map((r) => String(r.listing_type))),
-      );
-
-      params.push(minPrice);
-      const minPIdx = params.length;
-      params.push(maxPrice);
-      const maxPIdx = params.length;
-      params.push(listingTypes);
-      const ltIdx = params.length;
-      params.push(types);
-      const tIdx = params.length;
-
-      conditions.push(
-        `(l.price BETWEEN $${minPIdx} AND $${maxPIdx} AND l.listing_type = ANY($${ltIdx}) AND p.property_type_id = ANY($${tIdx}::uuid[]))`,
-      );
+    if (finalConditions.length > 0) {
+      query += ` AND (${finalConditions.join(' AND ')})`;
     }
 
-    if (conditions.length > 0) {
-      query += ` AND (${conditions.join(' OR ')})`;
-    }
-
-    query += ` LIMIT ${limit}`;
+    // 4. LUÔN LUÔN gộp thêm một bộ lọc Random để đảm bảo phá vỡ sự đơn điệu
+    // Chúng ta sẽ lấy candidates từ preferences/behavior + 10 tin ngẫu nhiên hoàn toàn
+    query = `
+      (${query} LIMIT ${limit * 2})
+      UNION 
+      (SELECT l.*, p.*, pt.name as property_type_name, pc.name as property_category_name
+       FROM listings l
+       JOIN properties p ON l.property_id = p.property_id
+       LEFT JOIN property_types pt ON p.property_type_id = pt.property_type_id
+       LEFT JOIN property_categories pc ON pt.property_category_id = pc.property_category_id
+       WHERE l.status = 'PUBLISHED' 
+       ${listingType ? `AND l.listing_type = '${listingType}'` : ''}
+       ORDER BY RANDOM() LIMIT 10)
+    `;
 
     try {
-      const { rows } = await this.pgPool.query(query, params);
+      const { rows } = (await this.pgPool.query(query, params as any[])) as {
+        rows: ListingCandidate[];
+      };
+      this.logger.log(
+        `getCandidateListings: fetched ${rows.length} candidates ` +
+          `(behavior=${interactedListings.length}, collaborative=${collaborativeIds.length}, ` +
+          `preferences=${preferences?.length ?? 0})`,
+      );
       return rows;
     } catch (e) {
       this.logger.error(
@@ -351,9 +456,18 @@ ${candidateContext}
     }
   }
 
-  private buildInteractedContext(history: Array<any>, rows: any[]): string {
-    const rowMap = new Map();
-    for (const r of rows) rowMap.set(String(r.listing_id), r);
+  private buildInteractedContext(
+    history: Array<{
+      listingId: string;
+      eventType: string;
+      durationSeconds: number | null;
+    }>,
+    rows: ListingCandidate[],
+  ): string {
+    const rowMap = new Map<string, ListingCandidate>();
+    for (const r of rows) {
+      rowMap.set(String(r.listing_id), r);
+    }
 
     const listingWeights = new Map<string, number>();
     for (const h of history) {
@@ -372,10 +486,12 @@ ${candidateContext}
     return sortedIds
       .map((id) => {
         const row = rowMap.get(id);
-        if (!row) return '';
+        if (!row) {
+          return '';
+        }
         return `[Engagement: ${listingWeights.get(id)}] ${this.formatListingForLLM(row)}`;
       })
-      .filter((s) => s)
+      .filter((s) => s !== '')
       .join('\n');
   }
 
@@ -442,6 +558,51 @@ ${candidateContext}
     return (
       `User behavior summary (${history.length} total events across ${listingEvents.size} listings):\n` +
       lines.join('\n')
+    );
+  }
+
+  private buildPreferenceSummary(preferences?: any[]): string {
+    if (!preferences || preferences.length === 0) {
+      return 'No explicit preferences provided.';
+    }
+
+    const lines = preferences.map((p, idx) => {
+      const criteria = p.criteria || {};
+      const parts = [];
+
+      const pType = criteria.propertyType || criteria.property_type;
+      if (pType) parts.push(`Type: ${pType}`);
+
+      const pCat = criteria.propertyCategory || criteria.property_category;
+      if (pCat) parts.push(`Category: ${pCat}`);
+
+      const price = criteria.price;
+      if (Array.isArray(price)) {
+        parts.push(`Price: ${price[0] ?? 0} to ${price[1] ?? 'Any'}`);
+      } else if (criteria.priceMin || criteria.priceMax) {
+        parts.push(
+          `Price: ${criteria.priceMin ?? 0} to ${criteria.priceMax ?? 'Any'}`,
+        );
+      }
+
+      const area = criteria.area;
+      if (Array.isArray(area)) {
+        parts.push(`Size: ${area[0] ?? 0} to ${area[1] ?? 'Any'} m2`);
+      }
+
+      if (criteria.location) parts.push(`Location: ${criteria.location}`);
+
+      if (criteria.dynamicAttributes) {
+        const attrs = Object.entries(criteria.dynamicAttributes)
+          .map(([k, v]) => `${k}:${v}`)
+          .join(', ');
+        parts.push(`Features: ${attrs}`);
+      }
+      return `${idx + 1}. [${p.searchType}] ${parts.join(' | ')}`;
+    });
+
+    return (
+      `Explicit User Preferences from Saved Searches:\n` + lines.join('\n')
     );
   }
 

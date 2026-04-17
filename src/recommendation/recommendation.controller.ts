@@ -63,6 +63,8 @@ export class RecommendationController {
       dto.userId,
       dto.limit ?? 10,
       dto.listingType,
+      dto.preferences,
+      dto.profileName,
     );
   }
 }

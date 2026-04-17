@@ -49,6 +49,24 @@ export interface ListingSearchResult {
   publishedAt: string;
 }
 
+export interface PricePointDto {
+  price: number;
+  effectiveDate: string;
+  changeAmount?: number;
+  changePercentage?: number;
+}
+
+export interface PriceHistoryResponse {
+  listingId: string;
+  currentPrice: number;
+  history: PricePointDto[];
+}
+
+export interface SimilarListingsResponse {
+  sourceListingId: string;
+  similarListings: ListingSearchResult[];
+}
+
 interface AttributeDto {
   attribute_name: string;
   display_value: string;
@@ -181,6 +199,59 @@ export class BackendApiService {
         this.logger.error(`Backend search error: ${error.message}`);
       }
       // Return empty array — the LLM will handle the no-results case gracefully
+      return [];
+    }
+  }
+
+  /**
+   * Fetch price history for a specific listing.
+   */
+  async getPriceHistory(
+    listingId: string,
+  ): Promise<PriceHistoryResponse | null> {
+    this.logger.log(`Fetching price history for listingId=${listingId}`);
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get<{ success: boolean; data: any }>(
+          `${this.backendUrl}/api/v1/listings/${listingId}/price-history`,
+          {
+            headers: { 'x-service-api-key': this.serviceApiKey },
+          },
+        ),
+      );
+
+      return response.data?.data ?? null;
+    } catch (error) {
+      this.logger.error(`Failed to fetch price history: ${listingId}`);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch similar listings for a given listing.
+   */
+  async getSimilarListings(
+    listingId: string,
+    limit: number = 5,
+  ): Promise<ListingSearchResult[]> {
+    this.logger.log(`Fetching similar listings for listingId=${listingId}`);
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get<{
+          success: boolean;
+          data: { similarListings: ListingDto[] };
+        }>(`${this.backendUrl}/api/v1/listings/${listingId}/similar`, {
+          params: { limit },
+          headers: { 'x-service-api-key': this.serviceApiKey },
+        }),
+      );
+
+      const listings = response.data?.data?.similarListings ?? [];
+      return listings.map((l) => this.mapToSearchResult(l));
+    } catch (error) {
+      this.logger.error(`Failed to fetch similar listings: ${listingId}`);
       return [];
     }
   }
