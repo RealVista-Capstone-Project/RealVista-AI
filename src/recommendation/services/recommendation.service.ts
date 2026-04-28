@@ -9,6 +9,7 @@ import type {
   IngestResponse,
 } from '../dto/recommendation-response.dto';
 import type { BehaviorEventDto } from '../dto/user-behavior.dto';
+import { AI_MODELS } from 'src/ai/ai.config';
 
 interface SavedSearchCriteria {
   propertyType?: string;
@@ -61,7 +62,7 @@ export class RecommendationService implements OnModuleDestroy {
     private readonly behaviorVectorService: UserBehaviorVectorService,
   ) {
     this.llm = new ChatGoogleGenerativeAI({
-      model: 'gemini-3.1-flash-lite-preview',
+      model: AI_MODELS.AGENT_MODEL,
       temperature: 0.3,
       apiKey: this.configService.get<string>('GOOGLE_API_KEY'),
     });
