@@ -1,5 +1,54 @@
 # RealVista AI Microservice
 
+## 💖 Heartfelt Gratitude
+
+We want to express our deepest appreciation to the incredible developers who have poured their passion and dedication into **RealVista**. This project wouldn't be where it is today without your hard work and commitment.
+
+<div align="center">
+  <table style="border: none; border-collapse: collapse;">
+    <tr>
+      <td align="center" valign="bottom">
+        <a href="https://github.com/ThanhTriIsCoding">
+          <img src="https://github.com/ThanhTriIsCoding.png" width="100px;" alt="ThanhTriIsCoding" style="border-radius: 50%; border: 2px solid #ffcc00;"/><br />
+          <sub><b>ThanhTriIsCoding</b></sub>
+        </a>
+      </td>
+      <td align="center" valign="bottom">
+        <a href="https://github.com/Hoang-Nguyen-Huy">
+          <img src="https://github.com/Hoang-Nguyen-Huy.png" width="130px;" alt="Hoang-Nguyen-Huy" style="border-radius: 50%; border: 2px solid #ffcc00;"/><br />
+          <sub><b>Hoang-Nguyen-Huy</b></sub>
+        </a>
+      </td>
+      <td align="center" valign="bottom">
+        <a href="https://github.com/HuyDiCode">
+          <img src="https://github.com/HuyDiCode.png" width="160px;" alt="HuyDiCode" style="border-radius: 50%; border: 4px solid #ffd700; box-shadow: 0 0 15px rgba(255, 215, 0, 0.5);"/><br />
+          <sub style="font-size: 1.2em;"><b>👑 HuyDiCode</b></sub>
+        </a>
+      </td>
+      <td align="center" valign="bottom">
+        <a href="https://github.com/nguyenhcp2004">
+          <img src="https://github.com/nguyenhcp2004.png" width="130px;" alt="Damien Huynh" style="border-radius: 50%; border: 2px solid #ffcc00;"/><br />
+          <sub><b>Damien Huynh</b></sub>
+        </a>
+      </td>
+      <td align="center" valign="bottom">
+        <a href="https://github.com/toki-ai">
+          <img src="https://github.com/toki-ai.png" width="100px;" alt="toki-ai" style="border-radius: 50%; border: 2px solid #ffcc00;"/><br />
+          <sub><b>toki-ai</b></sub>
+        </a>
+      </td>
+    </tr>
+  </table>
+
+  <p align="center">
+    <i>"Alone we can do so little; together we can do so much."</i>
+  </p>
+  
+  **Marked on: 08.05.2026**
+</div>
+
+---
+
 [![NestJS](https://img.shields.io/badge/framework-NestJS-E0234E?logo=nestjs&logoColor=white)](https://nestjs.com/)
 [![LangChain](https://img.shields.io/badge/AI-LangChain-1C3C3C?logo=langchain&logoColor=white)](https://js.langchain.com/)
 [![TypeScript](https://img.shields.io/badge/language-TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
